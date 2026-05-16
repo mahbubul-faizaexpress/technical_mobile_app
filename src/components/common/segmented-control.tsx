@@ -27,7 +27,7 @@ export function SegmentedControl<T extends string>({
         styles.wrapper,
         {
           backgroundColor: colors.cardMuted,
-          borderColor: "transparent",
+          borderColor: colors.border,
         },
       ]}
     >
@@ -45,7 +45,7 @@ export function SegmentedControl<T extends string>({
                   styles.staticPill,
                   {
                     backgroundColor: active ? colors.accent : colors.cardMuted,
-                    borderColor: "transparent",
+                    borderColor: active ? colors.accent : colors.border,
                   },
                 ]}
               >
@@ -88,7 +88,7 @@ export function SegmentedControl<T extends string>({
                   styles.pill,
                   {
                     backgroundColor: active ? colors.accent : colors.cardMuted,
-                    borderColor: "transparent",
+                    borderColor: active ? colors.accent : colors.border,
                   },
                 ]}
               >
@@ -125,7 +125,7 @@ export function SegmentedControl<T extends string>({
 
 const styles = StyleSheet.create({
   wrapper: {
-    borderRadius: 8,
+    borderRadius: 20,
     borderWidth: 1,
     padding: 4,
   },
@@ -138,12 +138,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   pill: {
-    borderRadius: 8,
+    borderRadius: 16,
     borderWidth: 1,
     flexDirection: "row",
     gap: 6,
-    minHeight: 34,
-    paddingHorizontal: 12,
+    minHeight: 40,
+    paddingHorizontal: 14,
     alignItems: "center",
     justifyContent: "center",
   },

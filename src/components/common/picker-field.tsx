@@ -57,6 +57,7 @@ export function PickerField({
           compact ? styles.triggerCompact : null,
           {
             backgroundColor: colors.cardMuted,
+            borderColor: colors.border,
             opacity: enabled ? (pressed ? 0.92 : 1) : 0.58,
           },
         ]}
@@ -83,7 +84,13 @@ export function PickerField({
         >
           <Pressable
             onPress={(event) => event.stopPropagation()}
-            style={[styles.sheet, { backgroundColor: colors.backgroundSecondary }]}
+            style={[
+              styles.sheet,
+              {
+                backgroundColor: colors.backgroundSecondary,
+                borderColor: colors.border,
+              },
+            ]}
           >
             <View style={styles.sheetHeader}>
               <Text style={[styles.sheetTitle, { color: colors.text }]}>
@@ -115,6 +122,7 @@ export function PickerField({
                       styles.option,
                       {
                         backgroundColor: selected ? colors.accent : colors.cardMuted,
+                        borderColor: selected ? colors.accent : colors.border,
                       },
                       pressed ? styles.pressed : null,
                     ]}
@@ -156,16 +164,17 @@ const styles = StyleSheet.create({
   },
   trigger: {
     alignItems: "center",
-    borderRadius: 8,
+    borderRadius: 18,
+    borderWidth: 1,
     flexDirection: "row",
     gap: 12,
     justifyContent: "space-between",
-    minHeight: 48,
-    paddingHorizontal: 14,
+    minHeight: 52,
+    paddingHorizontal: 16,
   },
   triggerCompact: {
-    minHeight: 38,
-    paddingHorizontal: 10,
+    minHeight: 40,
+    paddingHorizontal: 12,
   },
   triggerLabel: {
     flex: 1,
@@ -181,9 +190,10 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   sheet: {
-    borderRadius: 8,
+    borderRadius: 24,
+    borderWidth: 1,
     maxHeight: "72%",
-    padding: 14,
+    padding: 16,
   },
   sheetHeader: {
     alignItems: "center",
@@ -208,7 +218,8 @@ const styles = StyleSheet.create({
   },
   option: {
     alignItems: "center",
-    borderRadius: 8,
+    borderRadius: 16,
+    borderWidth: 1,
     flexDirection: "row",
     justifyContent: "space-between",
     minHeight: 46,

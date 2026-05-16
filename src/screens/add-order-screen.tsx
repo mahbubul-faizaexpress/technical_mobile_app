@@ -3,15 +3,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import {
   ADD_ORDER_FORM_DATA_QUERY,
-  CREATE_COMPANY_MUTATION,
-  CREATE_ORDER_MUTATION,
-  CREATE_PAYMENT_MUTATION,
-  CREATE_USER_MUTATION,
-  SUBMIT_ORDER_DOCUMENTS_MUTATION,
+  CREATE_TECHNICAL_ORDER_MUTATION,
+  TECHNICAL_ORDER_RESTRICTIONS_QUERY,
 } from "@/api/documents";
 import { uploadDocumentToCloudinary } from "@/api/cloudinary";
-import type { AddOrderFormData } from "@/api/types";
+import type { AddOrderFormData, PaymentStatus, TechnicalOrderRestrictions } from "@/api/types";
 import type { RootStackScreenProps } from "@/navigation/types";
+import { Badge } from "@/components/common/badge";
 import { Button } from "@/components/common/button";
 import { EmptyState } from "@/components/common/empty-state";
 import { LoadingState } from "@/components/common/loading-state";
@@ -24,9 +22,7 @@ import { useAppConfig } from "@/providers/app-config-provider";
 import { useAuth } from "@/providers/auth-provider";
 import { useAppTheme } from "@/theme/theme-provider";
 import {
-  buildManualTransactionId,
   buildOrderDates,
-  buildTemporaryPassword,
   formatCurrency,
   normalizePhone,
   normalizeText,
@@ -36,6 +32,18 @@ import { useAsyncResource } from "@/utils/use-async-resource";
 
 type OrderMode = "package" | "services";
 type PaymentCollectionStatus = "paid" | "partial_paid";
+type CompanyMemberType = "SINGLE" | "MULTIPLE";
+
+type OrderUserForm = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  password: string;
+  phone: string;
+  address: string;
+};
+
 type InitialDocumentRow = {
   id: string;
   attachmentUrl: string;
@@ -52,12 +60,63 @@ const orderModeOptions = [
 
 const paymentStatusOptions = [
   { label: "Paid", value: "paid" },
-  { label: "Partial paid", value: "partial_paid" },
+  { label: "Partial Paid", value: "partial_paid" },
 ] as const;
+
+const memberTypeOptions = [
+  { label: "Single Member", value: "SINGLE" },
+  { label: "Multiple Member", value: "MULTIPLE" },
+] as const;
+
+function createLocalId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createUserForm(input?: Partial<OrderUserForm>): OrderUserForm {
+  return {
+    id: createLocalId(),
+    firstName: input?.firstName ?? "",
+    lastName: input?.lastName ?? "",
+    email: input?.email ?? "",
+    password: input?.password ?? "",
+    phone: input?.phone ?? "",
+    address: input?.address ?? "",
+  };
+}
+
+function isValidManualPhoneNumber(value: string) {
+  const compactValue = value.trim().replace(/[\s().-]/g, "");
+
+  if (!compactValue) {
+    return false;
+  }
+
+  if (compactValue.startsWith("+")) {
+    return /^\+\d{5,20}$/.test(compactValue);
+  }
+
+  return /^\d{5,20}$/.test(compactValue);
+}
+
+function getMatchingCompanyCountryProfile(
+  company: AddOrderFormData["companies"][number] | null,
+  countryId?: string,
+) {
+  if (!company?.countryProfiles?.length || !countryId) {
+    return null;
+  }
+
+  const profiles = company.countryProfiles.filter(
+    (profile): profile is NonNullable<NonNullable<typeof company.countryProfiles>[number]> =>
+      profile != null,
+  );
+
+  return profiles.find((profile) => String(profile.countryId) === countryId) ?? null;
+}
 
 function createInitialDocumentRow(): InitialDocumentRow {
   return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: createLocalId(),
     attachmentUrl: "",
     documentName: "",
     serviceId: "",
@@ -74,66 +133,125 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
   const [orderMode, setOrderMode] = useState<OrderMode>("package");
   const [paymentStatus, setPaymentStatus] = useState<PaymentCollectionStatus>("paid");
   const [submitting, setSubmitting] = useState(false);
-
   const [selectedExistingCompanyId, setSelectedExistingCompanyId] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [countryId, setCountryId] = useState("");
   const [stateId, setStateId] = useState("");
   const [companyTypeId, setCompanyTypeId] = useState("");
   const [companyServiceTypeId, setCompanyServiceTypeId] = useState("");
+  const [companyMemberType, setCompanyMemberType] = useState<CompanyMemberType>("SINGLE");
   const [packageId, setPackageId] = useState("");
   const [selectedServiceIds, setSelectedServiceIds] = useState<number[]>([]);
   const [paidAmount, setPaidAmount] = useState("");
+  const [orderUsers, setOrderUsers] = useState<OrderUserForm[]>([createUserForm()]);
   const [initialDocuments, setInitialDocuments] = useState<InitialDocumentRow[]>([]);
 
   const compact = width < 420;
-  const stackedFields = width < 720;
+  const stackedFields = width < 760;
 
   const resource = useAsyncResource(
-    () => executeAuthenticated<AddOrderFormData, Record<string, never>>(ADD_ORDER_FORM_DATA_QUERY),
+    () =>
+      executeAuthenticated<
+        { technicalOrderFormData: AddOrderFormData },
+        Record<string, never>
+      >(ADD_ORDER_FORM_DATA_QUERY),
     [executeAuthenticated],
   );
 
-  const formData = resource.data;
+  const formData = resource.data?.technicalOrderFormData;
+  const restrictionsResource = useAsyncResource(
+    async () => {
+      if (!selectedExistingCompanyId || !countryId) {
+        return {
+          technicalOrderRestrictions: null,
+        };
+      }
+
+      return executeAuthenticated<
+        { technicalOrderRestrictions: TechnicalOrderRestrictions | null },
+        { input: { companyId: number; countryId: number; stateId?: number } }
+      >(TECHNICAL_ORDER_RESTRICTIONS_QUERY, {
+        input: {
+          companyId: Number(selectedExistingCompanyId),
+          countryId: Number(countryId),
+          ...(stateId ? { stateId: Number(stateId) } : {}),
+        },
+      });
+    },
+    [countryId, executeAuthenticated, selectedExistingCompanyId, stateId],
+  );
   const existingCompany =
     formData?.companies.find((item) => item.id === Number(selectedExistingCompanyId)) ?? null;
+  const existingCompanyProfile = useMemo(
+    () => getMatchingCompanyCountryProfile(existingCompany, countryId),
+    [countryId, existingCompany],
+  );
   const isExistingCompanySelected = Boolean(existingCompany);
   const activeCountries = formData?.countries.filter((item) => item.isActive) ?? [];
   const selectedCountry = activeCountries.find((item) => item.id === Number(countryId)) ?? null;
   const stateOptions =
     (selectedCountry?.states ?? [])
       .filter((item): item is NonNullable<typeof item> => Boolean(item?.isActive))
-      .map((item) => ({ id: item.id, name: item.name, fee: item.fee })) ?? [];
+      .map((item) => ({
+        id: item.id,
+        name: item.name,
+        fee: item.fee,
+      })) ?? [];
+  const selectedState = stateOptions.find((item) => item.id === Number(stateId)) ?? null;
+  const activePackages = (formData?.packages ?? []).filter((item) => item.isActive);
+  const activeServices = (formData?.services ?? []).filter((item) => item.isActive);
+  const technicalOrderRestrictions = restrictionsResource.data?.technicalOrderRestrictions ?? null;
+  const selectedExistingCompanyOrderedPackageIds = useMemo(
+    () => new Set(technicalOrderRestrictions?.blockedPackageIds ?? []),
+    [technicalOrderRestrictions?.blockedPackageIds],
+  );
+  const selectedExistingCompanyOrderedServiceIds = useMemo(
+    () => new Set(technicalOrderRestrictions?.blockedServiceIds ?? []),
+    [technicalOrderRestrictions?.blockedServiceIds],
+  );
+  const selectedExistingCompanyPackageServiceIds = useMemo(() => {
+    if (
+      !existingCompany ||
+      !technicalOrderRestrictions?.hasPackageOrderInScope ||
+      selectedExistingCompanyOrderedPackageIds.size === 0
+    ) {
+      return new Set<number>();
+    }
+
+    return new Set(
+      activePackages
+        .filter((pkg) => selectedExistingCompanyOrderedPackageIds.has(pkg.id))
+        .flatMap((pkg) =>
+          (pkg.packageServices ?? [])
+            .map((item) => item?.serviceId)
+            .filter((serviceId): serviceId is number => Number.isInteger(serviceId)),
+        ),
+    );
+  }, [
+    activePackages,
+    existingCompany,
+    selectedExistingCompanyOrderedPackageIds,
+    technicalOrderRestrictions?.hasPackageOrderInScope,
+  ]);
+  const hasExistingCompanyPackageOrder = Boolean(
+    isExistingCompanySelected && technicalOrderRestrictions?.hasPackageOrderInScope,
+  );
+
   const packageOptions = useMemo(
     () =>
-      (formData?.packages ?? []).filter(
-        (item) => item.isActive && item.countryId === Number(countryId),
+      activePackages.filter(
+        (item) =>
+          item.countryId === Number(countryId) &&
+          (!isExistingCompanySelected || !selectedExistingCompanyOrderedPackageIds.has(item.id)),
       ) ?? [],
-    [countryId, formData?.packages],
+    [activePackages, countryId, isExistingCompanySelected, selectedExistingCompanyOrderedPackageIds],
   );
-  const serviceOptions = useMemo(
-    () =>
-      (formData?.services ?? []).filter(
-        (item) => item.isActive && item.countryId === Number(countryId),
-      ) ?? [],
-    [countryId, formData?.services],
-  );
+
   const selectedPackage = useMemo(
     () => packageOptions.find((item) => item.id === Number(packageId)) ?? null,
     [packageId, packageOptions],
   );
-  const selectedServices = useMemo(
-    () =>
-      orderMode === "services"
-        ? serviceOptions.filter((item) => selectedServiceIds.includes(item.id))
-        : [],
-    [orderMode, selectedServiceIds, serviceOptions],
-  );
+
   const packageIncludedServices = useMemo(
     () =>
       (selectedPackage?.packageServices ?? [])
@@ -141,111 +259,234 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
         .filter((item): item is NonNullable<typeof item> => Boolean(item)) ?? [],
     [selectedPackage],
   );
-  const packageIncludedServiceNames = packageIncludedServices.map((item) => item.name).join(", ");
-  const documentServiceOptions = useMemo(() => {
-    const merged = orderMode === "package" ? packageIncludedServices : selectedServices;
 
-    return merged.filter(
-      (service, index, current) =>
-        current.findIndex((item) => item.id === service.id) === index,
-    );
-  }, [orderMode, packageIncludedServices, selectedServices]);
-
-  const selectedState = stateOptions.find((item) => item.id === Number(stateId)) ?? null;
-  const stateFee = parseMoney(selectedState?.fee);
-  const packagePrice = parseMoney(selectedPackage?.currentPrice);
-  const serviceTotal = selectedServices.reduce(
-    (total, service) => total + parseMoney(service.currentPrice),
-    0,
-  );
-  const totalAmount = stateFee + (orderMode === "package" ? packagePrice : 0) + serviceTotal;
-  const normalizedCompanyInput = normalizeText(companyName).toLowerCase();
-  const companySuggestions = useMemo(() => {
-    if (!normalizedCompanyInput) {
+  const serviceOptions = useMemo(() => {
+    if (!countryId) {
       return [];
     }
 
-    return (formData?.companies ?? [])
-      .filter((item) =>
-        item.name.trim().toLowerCase().includes(normalizedCompanyInput),
-      )
-      .slice(0, 6);
-  }, [formData?.companies, normalizedCompanyInput]);
-  const showCompanySuggestions =
-    !isExistingCompanySelected &&
-    normalizedCompanyInput.length > 0 &&
-    companySuggestions.length > 0;
+    const countryServices = activeServices.filter((service) => service.countryId === Number(countryId));
+
+    if (orderMode === "package") {
+      if (!selectedPackage) {
+        return [];
+      }
+
+      const packageServiceIds = new Set(
+        (selectedPackage.packageServices ?? [])
+          .map((item) => item?.serviceId)
+          .filter((serviceId): serviceId is number => Number.isInteger(serviceId)),
+      );
+
+      return countryServices.filter(
+        (service) =>
+          !packageServiceIds.has(service.id) &&
+          !selectedExistingCompanyOrderedServiceIds.has(service.id),
+      );
+    }
+
+    return countryServices.filter(
+      (service) =>
+        !selectedExistingCompanyOrderedServiceIds.has(service.id) &&
+        !selectedExistingCompanyPackageServiceIds.has(service.id),
+    );
+  }, [
+    activeServices,
+    countryId,
+    orderMode,
+    selectedExistingCompanyOrderedServiceIds,
+    selectedExistingCompanyPackageServiceIds,
+    selectedPackage,
+  ]);
+
+  const selectedServices = useMemo(
+    () => serviceOptions.filter((service) => selectedServiceIds.includes(service.id)),
+    [selectedServiceIds, serviceOptions],
+  );
+
+  const documentServiceOptions = useMemo(() => {
+    const baseServices =
+      orderMode === "package" ? [...packageIncludedServices, ...selectedServices] : selectedServices;
+
+    return baseServices.filter(
+      (service, index, current) => current.findIndex((item) => item.id === service.id) === index,
+    );
+  }, [orderMode, packageIncludedServices, selectedServices]);
+
+  const selectedCompanyType = useMemo(
+    () => (formData?.companyTypes ?? []).find((item) => item.id === Number(companyTypeId)) ?? null,
+    [companyTypeId, formData?.companyTypes],
+  );
+
+  const resolvedMemberType = isExistingCompanySelected
+    ? (existingCompany?.users && existingCompany.users.length > 1 ? "MULTIPLE" : "SINGLE")
+    : selectedCompanyType?.memberType ?? companyMemberType;
+
+  const stateFee = parseMoney(selectedState?.fee);
+  const packagePrice = parseMoney(selectedPackage?.currentPrice);
+  const selectedServicesPrice = selectedServices.reduce(
+    (sum, service) => sum + parseMoney(service.currentPrice),
+    0,
+  );
+  const hasSelectedServiceWithStateFee = selectedServices.some((service) => service.requiresStateFee);
+  const shouldApplyStateFee = orderMode === "package" || hasSelectedServiceWithStateFee;
+  const totalAmount = (shouldApplyStateFee ? stateFee : 0) + (orderMode === "package" ? packagePrice : 0) + selectedServicesPrice;
 
   useEffect(() => {
-    const validServiceIds = new Set(documentServiceOptions.map((item) => String(item.id)));
+    if (!hasExistingCompanyPackageOrder) {
+      return;
+    }
 
-    setInitialDocuments((current) => {
-      let changed = false;
+    if (orderMode !== "services") {
+      setOrderMode("services");
+    }
 
-      const nextRows = current.map((row) => {
-        if (row.serviceId && !validServiceIds.has(row.serviceId)) {
-          changed = true;
+    if (packageId) {
+      setPackageId("");
+    }
+  }, [hasExistingCompanyPackageOrder, orderMode, packageId]);
 
-          return {
-            ...row,
-            serviceId: "",
-          };
-        }
+  useEffect(() => {
+    const validServiceIds = new Set(serviceOptions.map((item) => item.id));
+    setSelectedServiceIds((current) => current.filter((serviceId) => validServiceIds.has(serviceId)));
+  }, [serviceOptions]);
 
-        return row;
-      });
-
-      return changed ? nextRows : current;
-    });
+  useEffect(() => {
+    const validDocumentServiceIds = new Set(documentServiceOptions.map((item) => String(item.id)));
+    setInitialDocuments((current) =>
+      current.map((row) =>
+        row.serviceId && !validDocumentServiceIds.has(row.serviceId)
+          ? { ...row, serviceId: "" }
+          : row,
+      ),
+    );
   }, [documentServiceOptions]);
 
-  const handleExistingCompanyChange = (companyIdValue: string) => {
-    setSelectedExistingCompanyId(companyIdValue);
-    const company = formData?.companies.find((item) => item.id === Number(companyIdValue));
+  const applyExistingCompany = (companyId: string) => {
+    setSelectedExistingCompanyId(companyId);
+    const company = formData?.companies.find((item) => item.id === Number(companyId));
 
     if (!company) {
       return;
     }
 
+    const defaultProfile =
+      company.countryProfiles?.find(
+        (profile): profile is NonNullable<NonNullable<typeof company.countryProfiles>[number]> =>
+          Boolean(profile),
+      ) ?? null;
+    setCompanyName(company.name);
+    setCountryId(
+      defaultProfile?.countryId
+        ? String(defaultProfile.countryId)
+        : String(company.state?.countryId ?? ""),
+    );
+    setStateId(
+      defaultProfile?.stateId
+        ? String(defaultProfile.stateId)
+        : String(company.stateId ?? ""),
+    );
+    setCompanyTypeId(
+      defaultProfile?.companyTypeId
+        ? String(defaultProfile.companyTypeId)
+        : String(company.companyTypeId ?? ""),
+    );
+    setCompanyServiceTypeId(
+      defaultProfile?.serviceTypeId
+        ? String(defaultProfile.serviceTypeId)
+        : String(company.serviceTypeId ?? ""),
+    );
+    const companyUsers =
+      company.users?.filter((user): user is NonNullable<typeof user> => Boolean(user)) ??
+      (company.user ? [company.user] : []);
+    setOrderUsers(
+      companyUsers.length
+        ? companyUsers.map((user) =>
+            createUserForm({
+              firstName: user.firstName ?? "",
+              lastName: user.lastName ?? "",
+              email: user.email ?? "",
+              password: "",
+              phone: user.phone ?? "",
+              address: user.address ?? "",
+            }),
+          )
+        : [createUserForm()],
+    );
     setPackageId("");
     setSelectedServiceIds([]);
     setInitialDocuments([]);
-    setCompanyName(company.name);
-    setCompanyTypeId(String(company.companyTypeId));
-    setCompanyServiceTypeId(String(company.serviceTypeId));
-    setStateId(String(company.stateId));
-    setCountryId(String(company.state?.countryId ?? ""));
-    setFirstName(company.user?.firstName ?? "");
-    setLastName(company.user?.lastName ?? "");
-    setEmail(company.user?.email ?? "");
-    setPhone(company.user?.phone ?? "");
-    setAddress(company.user?.address ?? "");
+  };
+
+  const resetExistingCompanySelection = () => {
+    setSelectedExistingCompanyId("");
+    setCountryId("");
+    setStateId("");
+    setCompanyTypeId("");
+    setCompanyServiceTypeId("");
+    setCompanyMemberType("SINGLE");
+    setPackageId("");
+    setSelectedServiceIds([]);
+    setInitialDocuments([]);
+    setOrderUsers([createUserForm()]);
   };
 
   const handleCompanyNameChange = (value: string) => {
     setCompanyName(value);
 
+    if (
+      existingCompany &&
+      normalizeText(value).toLowerCase() !== existingCompany.name.trim().toLowerCase()
+    ) {
+      resetExistingCompanySelection();
+      setCompanyName(value);
+    }
+  };
+
+  const companySuggestions = useMemo(() => {
+    const normalizedSearch = normalizeText(companyName).toLowerCase();
+
+    if (!normalizedSearch || isExistingCompanySelected) {
+      return [];
+    }
+
+    return (formData?.companies ?? [])
+      .filter((company) => company.name.trim().toLowerCase().includes(normalizedSearch))
+      .slice(0, 6);
+  }, [companyName, formData?.companies, isExistingCompanySelected]);
+
+  useEffect(() => {
     if (!existingCompany) {
       return;
     }
 
-    if (normalizeText(value).toLowerCase() === existingCompany.name.trim().toLowerCase()) {
+    if (!countryId) {
+      setStateId("");
+      setCompanyTypeId("");
+      setCompanyServiceTypeId("");
       return;
     }
 
-    setSelectedExistingCompanyId("");
-    setFirstName("");
-    setLastName("");
-    setEmail("");
-    setPhone("");
-    setAddress("");
-    setCountryId("");
+    const matchingProfile = getMatchingCompanyCountryProfile(existingCompany, countryId);
+
+    if (matchingProfile) {
+      setStateId(String(matchingProfile.stateId));
+      setCompanyTypeId(String(matchingProfile.companyTypeId));
+      setCompanyServiceTypeId(String(matchingProfile.serviceTypeId));
+      return;
+    }
+
     setStateId("");
-    setCompanyTypeId("");
-    setCompanyServiceTypeId("");
-    setPackageId("");
-    setSelectedServiceIds([]);
-    setInitialDocuments([]);
+    setCompanyTypeId(existingCompany.companyTypeId ? String(existingCompany.companyTypeId) : "");
+    setCompanyServiceTypeId(existingCompany.serviceTypeId ? String(existingCompany.serviceTypeId) : "");
+  }, [countryId, existingCompany]);
+
+  const addUser = () => {
+    setOrderUsers((current) => [...current, createUserForm()]);
+  };
+
+  const removeUser = (userId: string) => {
+    setOrderUsers((current) => (current.length > 1 ? current.filter((user) => user.id !== userId) : current));
   };
 
   const toggleService = (serviceId: number) => {
@@ -254,17 +495,6 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
         ? current.filter((item) => item !== serviceId)
         : [...current, serviceId],
     );
-  };
-
-  const handleOrderModeChange = (nextMode: OrderMode) => {
-    setOrderMode(nextMode);
-
-    if (nextMode === "package") {
-      setSelectedServiceIds([]);
-      return;
-    }
-
-    setPackageId("");
   };
 
   const addDocumentRow = () => {
@@ -291,6 +521,7 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
     }
 
     const asset = result.assets[0];
+
     setInitialDocuments((current) =>
       current.map((item) =>
         item.id === rowId
@@ -343,21 +574,45 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
   };
 
   const validate = () => {
-    if (!existingCompany) {
-      const requiredFields = [
-        firstName,
-        lastName,
-        email,
-        phone,
-        companyName,
-        countryId,
-        stateId,
-        companyTypeId,
-        companyServiceTypeId,
-      ];
+    if (
+      !normalizeText(companyName) ||
+      !countryId ||
+      !stateId ||
+      (!isExistingCompanySelected && !companyTypeId) ||
+      (!isExistingCompanySelected && !companyServiceTypeId)
+    ) {
+      return "Complete all company fields.";
+    }
 
-      if (requiredFields.some((value) => !normalizeText(value).length)) {
-        return "Complete all new company fields.";
+    if (!isExistingCompanySelected) {
+      for (const user of orderUsers) {
+        const normalizedPhone = normalizePhone(user.phone);
+
+        if (
+          !normalizeText(user.firstName) ||
+          !normalizeText(user.lastName) ||
+          !normalizeText(user.email) ||
+          !normalizeText(user.phone) ||
+          !normalizeText(user.address)
+        ) {
+          return "Complete all required user information fields.";
+        }
+
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.email.trim())) {
+          return "Enter a valid email address for each user.";
+        }
+
+        if (!user.password.trim()) {
+          return "Password is required for each new user.";
+        }
+
+        if (user.password.trim().length < 8) {
+          return "Password must be at least 8 characters.";
+        }
+
+        if (!isValidManualPhoneNumber(normalizedPhone)) {
+          return "Enter a valid phone number for each user.";
+        }
       }
     }
 
@@ -365,15 +620,30 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
       return "Choose a package.";
     }
 
-    if (selectedServiceIds.length === 0 && orderMode === "services") {
+    if (orderMode === "services" && selectedServiceIds.length === 0) {
       return "Choose at least one service.";
     }
 
-    if (paymentStatus === "partial_paid" && parseMoney(paidAmount) <= 0) {
-      return "Enter a partial paid amount.";
+    if (paymentStatus === "partial_paid") {
+      const partialAmount = parseMoney(paidAmount);
+
+      if (partialAmount <= 0) {
+        return "Enter a valid partial paid amount.";
+      }
+
+      if (partialAmount >= totalAmount) {
+        return "Partial paid amount must be less than the total amount.";
+      }
     }
 
     for (const row of initialDocuments) {
+      const hasAnyValue =
+        row.documentName.trim() || row.serviceId.trim() || row.attachmentUrl.trim() || row.uploadedFileName.trim();
+
+      if (!hasAnyValue) {
+        continue;
+      }
+
       if (!row.serviceId || !row.documentName.trim() || !row.attachmentUrl.trim()) {
         return "Complete every initial document row before submitting.";
       }
@@ -397,147 +667,108 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
     try {
       setSubmitting(true);
 
-      let companyId = existingCompany?.id ?? null;
-
-      if (!companyId) {
-        const userResult = await executeAuthenticated<
-          { adminCreateUser: { id: string } },
-          {
-            input: {
-              firstName: string;
-              lastName: string;
-              email: string;
-              phone: string;
-              address: string;
-              password: string;
-              role: "USER";
-              status: "ACTIVE";
-            };
-          }
-        >(CREATE_USER_MUTATION, {
-          input: {
-            firstName: normalizeText(firstName),
-            lastName: normalizeText(lastName),
-            email: email.trim().toLowerCase(),
-            phone: normalizePhone(phone),
-            address: normalizeText(address),
-            password: buildTemporaryPassword(),
-            role: "USER",
-            status: "ACTIVE",
-          },
-        });
-
-        const companyResult = await executeAuthenticated<
-          { createCompany: { id: number } },
-          {
-            input: {
-              userId: string;
-              name: string;
-              companyTypeId: number;
-              serviceTypeId: number;
-              stateId: number;
-              isActive: true;
-            };
-          }
-        >(CREATE_COMPANY_MUTATION, {
-          input: {
-            userId: userResult.adminCreateUser.id,
-            name: normalizeText(companyName),
-            companyTypeId: Number(companyTypeId),
-            serviceTypeId: Number(companyServiceTypeId),
-            stateId: Number(stateId),
-            isActive: true,
-          },
-        });
-
-        companyId = companyResult.createCompany.id;
-      }
-
       const orderDates = buildOrderDates();
-      const orderResult = await executeAuthenticated<
-        { createOrder: { id: number; price: string } },
-        {
-          input: {
-            companyId: number;
-            packageId?: number;
-            serviceIds: number[];
-            price: number;
-            startDate: string;
-            endDate: string;
-            status: "PENDING";
-          };
-        }
-      >(CREATE_ORDER_MUTATION, {
-        input: {
-          companyId,
-          ...(orderMode === "package" && packageId ? { packageId: Number(packageId) } : {}),
-          serviceIds: orderMode === "services" ? selectedServiceIds : [],
-          price: totalAmount,
-          startDate: orderDates.startDate,
-          endDate: orderDates.endDate,
-          status: "PENDING",
-        },
-      });
-
-      const orderId = orderResult.createOrder.id;
-      const orderPrice = parseMoney(orderResult.createOrder.price);
-      const paymentAmount =
-        paymentStatus === "paid" ? orderPrice || totalAmount : parseMoney(paidAmount);
+      const preparedUsers = orderUsers.map((user) => ({
+        firstName: normalizeText(user.firstName),
+        lastName: normalizeText(user.lastName),
+        email: user.email.trim().toLowerCase(),
+        password: user.password.trim(),
+        phone: normalizePhone(user.phone),
+        ...(normalizeText(user.address).length ? { address: normalizeText(user.address) } : {}),
+      }));
+      const paymentAmount = paymentStatus === "paid" ? totalAmount : parseMoney(paidAmount);
 
       await executeAuthenticated<
-        { createPayment: { id: number } },
+        { technicalCreateOrder: { order: { id: number } } },
         {
-          input: {
-            orderId: number;
-            amount: number;
-            currency: "USD";
-            paymentMethod: "MAIN_BALANCE";
-            status: "PAID" | "PARTIALLY_PAID";
-            transactionId: string;
+            input: {
+              existingCompanyId?: number;
+              company?: {
+                companyTypeId: number;
+                isActive: boolean;
+              memberType?: CompanyMemberType;
+              name: string;
+              serviceTypeId: number;
+              stateId: number;
+            };
+              user?: {
+                firstName: string;
+                lastName: string;
+                email: string;
+                password?: string;
+                phone: string;
+                address?: string;
+              };
+              users?: Array<{
+                firstName: string;
+                lastName: string;
+                email: string;
+                password?: string;
+                phone: string;
+                address?: string;
+              }>;
+            documents?: Array<{
+              attachment: string;
+              documentName: string;
+              serviceId: number;
+            }>;
+            endDate: string;
+            packageId?: number;
+            payment: {
+              amount: number;
+              status: PaymentStatus;
+            };
+            serviceIds?: number[];
+            startDate: string;
           };
         }
-      >(CREATE_PAYMENT_MUTATION, {
+      >(CREATE_TECHNICAL_ORDER_MUTATION, {
         input: {
-          orderId,
-          amount: paymentAmount,
-          currency: "USD",
-          paymentMethod: "MAIN_BALANCE",
-          status: paymentStatus === "paid" ? "PAID" : "PARTIALLY_PAID",
-          transactionId: buildManualTransactionId(orderId),
+          ...(isExistingCompanySelected
+            ? {
+                existingCompanyId: Number(selectedExistingCompanyId),
+              }
+            : {
+                user: preparedUsers[0],
+                ...(preparedUsers.length > 1 ? { users: preparedUsers.slice(1) } : {}),
+              }),
+          company: {
+            companyTypeId: Number(
+              companyTypeId || existingCompanyProfile?.companyTypeId || existingCompany?.companyTypeId,
+            ),
+            isActive: true,
+            ...(resolvedMemberType ? { memberType: resolvedMemberType } : {}),
+            name: normalizeText(companyName),
+            serviceTypeId: Number(
+              companyServiceTypeId ||
+                existingCompanyProfile?.serviceTypeId ||
+                existingCompany?.serviceTypeId,
+            ),
+            stateId: Number(stateId),
+          },
+          ...(orderMode === "package" && packageId ? { packageId: Number(packageId) } : {}),
+          ...(selectedServiceIds.length ? { serviceIds: selectedServiceIds } : {}),
+          ...(initialDocuments.filter((row) => row.serviceId && row.attachmentUrl.trim()).length
+            ? {
+                documents: initialDocuments
+                  .filter((row) => row.serviceId && row.attachmentUrl.trim())
+                  .map((row) => ({
+                    attachment: row.attachmentUrl.trim(),
+                    documentName: normalizeText(row.documentName),
+                    serviceId: Number(row.serviceId),
+                  })),
+              }
+            : {}),
+          endDate: orderDates.endDate,
+          payment: {
+            amount: paymentAmount,
+            status: paymentStatus === "paid" ? "PAID" : "PARTIALLY_PAID",
+          },
+          startDate: orderDates.startDate,
         },
       });
 
-      if (initialDocuments.length > 0) {
-        await executeAuthenticated<
-          { submitOrderDocuments: { orderId: number } },
-          {
-            input: {
-              orderId: number;
-              documents: Array<{
-                serviceId: number;
-                documentName: string;
-                attachment: string;
-              }>;
-            };
-          }
-        >(SUBMIT_ORDER_DOCUMENTS_MUTATION, {
-          input: {
-            orderId,
-            documents: initialDocuments.map((row) => ({
-              serviceId: Number(row.serviceId),
-              documentName: normalizeText(row.documentName),
-              attachment: row.attachmentUrl.trim(),
-            })),
-          },
-        });
-      }
-
-      Alert.alert(
-        "Success",
-        initialDocuments.length
-          ? "Order and initial documents created successfully."
-          : "Order created successfully.",
-      );
+      Alert.alert("Success", "Order created successfully.");
       navigation.goBack();
     } catch (error) {
       Alert.alert(
@@ -560,8 +791,15 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
   return (
     <Screen>
       <View style={styles.stack}>
+        <View style={styles.hero}>
+          <Text style={[styles.heroEyebrow, { color: colors.accent }]}>Create order</Text>
+          <Text style={[styles.heroTitle, { color: colors.text }]}>Technical order flow</Text>
+          <Text style={[styles.heroCopy, { color: colors.textSoft }]}>
+            Create a new package or service order, attach initial documents, and record manual payment in one transaction.
+          </Text>
+        </View>
+
         <Surface style={styles.card}>
-          <Text style={[styles.sectionEyebrow, { color: colors.textSoft }]}>Company</Text>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Company</Text>
           <TextField
             label="Company"
@@ -569,87 +807,51 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
             value={companyName}
             onChangeText={handleCompanyNameChange}
           />
-          {showCompanySuggestions ? (
-            <View style={[styles.suggestionPanel, { backgroundColor: colors.cardMuted }]}>
+
+          {companySuggestions.length ? (
+            <View style={[styles.suggestionPanel, { backgroundColor: colors.cardMuted, borderColor: colors.border }]}>
               {companySuggestions.map((item) => (
                 <Pressable
                   key={item.id}
-                  onPress={() => handleExistingCompanyChange(String(item.id))}
+                  onPress={() => applyExistingCompany(String(item.id))}
                   style={({ pressed }) => [
                     styles.suggestionRow,
-                    pressed ? styles.suggestionRowPressed : null,
+                    pressed ? styles.suggestionPressed : null,
                   ]}
                 >
-                  <Text numberOfLines={1} style={[styles.suggestionTitle, { color: colors.text }]}>
-                    {item.name}
-                  </Text>
-                  <Text numberOfLines={1} style={[styles.suggestionMeta, { color: colors.textSoft }]}>
-                    {item.user?.email ?? "Existing company"}
+                  <Text style={[styles.suggestionTitle, { color: colors.text }]}>{item.name}</Text>
+                  <Text style={[styles.suggestionMeta, { color: colors.textSoft }]}>
+                    {[
+                      item.state?.country?.name,
+                      item.state?.name,
+                      item.user?.email,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || "Existing company"}
                   </Text>
                 </Pressable>
               ))}
             </View>
           ) : null}
-          <View style={[styles.row, stackedFields && styles.rowStack]}>
-            <TextField
-              containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
-              editable={!isExistingCompanySelected}
-              label="First name"
-              value={firstName}
-              onChangeText={setFirstName}
-            />
-            <TextField
-              containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
-              editable={!isExistingCompanySelected}
-              label="Last name"
-              value={lastName}
-              onChangeText={setLastName}
-            />
-          </View>
-          <TextField
-            editable={!isExistingCompanySelected}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            label="Email"
-            value={email}
-            onChangeText={setEmail}
-          />
-          <View style={[styles.row, stackedFields && styles.rowStack]}>
-            <TextField
-              containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
-              editable={!isExistingCompanySelected}
-              keyboardType="phone-pad"
-              label="Phone"
-              value={phone}
-              onChangeText={setPhone}
-            />
-            <TextField
-              containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
-              editable={!isExistingCompanySelected}
-              label="Address"
-              value={address}
-              onChangeText={setAddress}
-            />
-          </View>
-          <PickerField
-            enabled={!isExistingCompanySelected}
-            label="Country"
-            selectedValue={countryId}
-            options={[
-              { label: "Choose country", value: "" },
-              ...activeCountries.map((item) => ({ label: item.name, value: String(item.id) })),
-            ]}
-            onValueChange={(value) => {
-              setCountryId(value);
-              setStateId("");
-              setPackageId("");
-              setSelectedServiceIds([]);
-            }}
-          />
+
           <View style={[styles.row, stackedFields && styles.rowStack]}>
             <PickerField
               containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
-              enabled={!isExistingCompanySelected}
+              label="Country"
+              selectedValue={countryId}
+              options={[
+                { label: "Choose country", value: "" },
+                ...activeCountries.map((item) => ({ label: item.name, value: String(item.id) })),
+              ]}
+              onValueChange={(value) => {
+                setCountryId(value);
+                setStateId("");
+                setPackageId("");
+                setSelectedServiceIds([]);
+              }}
+            />
+            <PickerField
+              containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
               label="State"
               selectedValue={stateId}
               options={[
@@ -661,9 +863,11 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
               ]}
               onValueChange={setStateId}
             />
+          </View>
+
+          <View style={[styles.row, stackedFields && styles.rowStack]}>
             <PickerField
               containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
-              enabled={!isExistingCompanySelected}
               label="Company type"
               selectedValue={companyTypeId}
               options={[
@@ -675,27 +879,152 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
               ]}
               onValueChange={setCompanyTypeId}
             />
+            <PickerField
+              containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
+              label="Service type"
+              selectedValue={companyServiceTypeId}
+              options={[
+                { label: "Choose service type", value: "" },
+                ...(formData?.companyServiceTypes.map((item) => ({
+                  label: item.name,
+                  value: String(item.id),
+                })) ?? []),
+              ]}
+              onValueChange={setCompanyServiceTypeId}
+            />
           </View>
-          <PickerField
-            enabled={!isExistingCompanySelected}
-            label="Service type"
-            selectedValue={companyServiceTypeId}
-            options={[
-              { label: "Choose service type", value: "" },
-              ...(formData?.companyServiceTypes.map((item) => ({
-                label: item.name,
-                value: String(item.id),
-              })) ?? []),
-            ]}
-            onValueChange={setCompanyServiceTypeId}
-          />
+
+          {!isExistingCompanySelected ? (
+            <PickerField
+              label="Member type"
+              selectedValue={companyMemberType}
+              options={memberTypeOptions.map((option) => ({
+                label: option.label,
+                value: option.value,
+              }))}
+              onValueChange={(value) => setCompanyMemberType(value as CompanyMemberType)}
+            />
+          ) : null}
         </Surface>
 
-        <SegmentedControl options={orderModeOptions} value={orderMode} onChange={handleOrderModeChange} />
+        <Surface style={styles.card}>
+          <View style={styles.rowBetween}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Users</Text>
+            {!isExistingCompanySelected && resolvedMemberType === "MULTIPLE" ? (
+              <Button label="Add User" tone="secondary" onPress={addUser} />
+            ) : null}
+          </View>
+
+          {orderUsers.map((user, index) => (
+            <View
+              key={user.id}
+              style={[styles.userCard, { backgroundColor: colors.cardMuted, borderColor: colors.border }]}
+            >
+              <View style={styles.rowBetween}>
+                <Text style={[styles.userTitle, { color: colors.text }]}>User {index + 1}</Text>
+                {!isExistingCompanySelected && orderUsers.length > 1 ? (
+                  <Button label="Remove" tone="ghost" onPress={() => removeUser(user.id)} />
+                ) : null}
+              </View>
+
+              <View style={[styles.row, stackedFields && styles.rowStack]}>
+                <TextField
+                  containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
+                  editable={!isExistingCompanySelected}
+                  label="First name"
+                  value={user.firstName}
+                  onChangeText={(value) =>
+                    setOrderUsers((current) =>
+                      current.map((item) => (item.id === user.id ? { ...item, firstName: value } : item)),
+                    )
+                  }
+                />
+                <TextField
+                  containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
+                  editable={!isExistingCompanySelected}
+                  label="Last name"
+                  value={user.lastName}
+                  onChangeText={(value) =>
+                    setOrderUsers((current) =>
+                      current.map((item) => (item.id === user.id ? { ...item, lastName: value } : item)),
+                    )
+                  }
+                />
+              </View>
+              <View style={[styles.row, stackedFields && styles.rowStack]}>
+                <TextField
+                  containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
+                  editable={!isExistingCompanySelected}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  label="Email"
+                  value={user.email}
+                  onChangeText={(value) =>
+                    setOrderUsers((current) =>
+                      current.map((item) => (item.id === user.id ? { ...item, email: value } : item)),
+                    )
+                  }
+                />
+                <TextField
+                  containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
+                  editable={!isExistingCompanySelected}
+                  label="Password"
+                  secureTextEntry
+                  textContentType="password"
+                  value={user.password}
+                  onChangeText={(value) =>
+                    setOrderUsers((current) =>
+                      current.map((item) => (item.id === user.id ? { ...item, password: value } : item)),
+                    )
+                  }
+                />
+              </View>
+              <View style={[styles.row, stackedFields && styles.rowStack]}>
+                <TextField
+                  containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
+                  editable={!isExistingCompanySelected}
+                  keyboardType="phone-pad"
+                  label="Phone"
+                  value={user.phone}
+                  onChangeText={(value) =>
+                    setOrderUsers((current) =>
+                      current.map((item) => (item.id === user.id ? { ...item, phone: value } : item)),
+                    )
+                  }
+                />
+                <TextField
+                  containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
+                  editable={!isExistingCompanySelected}
+                  label="Address"
+                  value={user.address}
+                  onChangeText={(value) =>
+                    setOrderUsers((current) =>
+                      current.map((item) => (item.id === user.id ? { ...item, address: value } : item)),
+                    )
+                  }
+                />
+              </View>
+            </View>
+          ))}
+        </Surface>
+
+        <SegmentedControl
+          options={orderModeOptions}
+          value={orderMode}
+          onChange={(value) => setOrderMode(value as OrderMode)}
+        />
+
+        {hasExistingCompanyPackageOrder ? (
+          <Surface muted style={styles.inlineNotice}>
+            <Text style={[styles.noticeText, { color: colors.text }]}>
+              This company already has a package order. It can only order services outside that package.
+            </Text>
+          </Surface>
+        ) : null}
 
         <Surface style={styles.card}>
-          <Text style={[styles.sectionEyebrow, { color: colors.textSoft }]}>Order setup</Text>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Order setup</Text>
+
           {orderMode === "package" ? (
             <>
               <PickerField
@@ -710,58 +1039,74 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
                 ]}
                 onValueChange={setPackageId}
               />
-              <View style={[styles.infoPanel, { backgroundColor: colors.cardMuted }]}>
-                <Text style={[styles.infoLabel, { color: colors.textSoft }]}>
-                  Included services
-                </Text>
-                <Text style={[styles.infoValue, { color: colors.text }]}>
-                  {packageIncludedServiceNames || "Choose a package to see included services."}
-                </Text>
-              </View>
-            </>
-          ) : (
-            <>
-              <Text style={[styles.helper, { color: colors.textSoft }]}>
-                Select one or more direct services for this order.
-              </Text>
-              <View style={styles.chipWrap}>
-                {serviceOptions.map((service) => {
-                  const active = selectedServiceIds.includes(service.id);
 
-                  return (
-                    <Pressable
-                      key={service.id}
-                      onPress={() => toggleService(service.id)}
-                      style={[
-                        styles.serviceChip,
-                        {
-                          backgroundColor: active ? colors.accent : colors.cardMuted,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.serviceChipLabel,
-                          { color: active ? "#042321" : colors.text },
-                        ]}
-                      >
-                        {service.name}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+              <View style={[styles.inlineNotice, { backgroundColor: colors.cardMuted, borderColor: colors.border }]}>
+                <Text style={[styles.noticeLabel, { color: colors.textSoft }]}>Included services</Text>
+                <Text style={[styles.noticeText, { color: colors.text }]}>
+                  {packageIncludedServices.length
+                    ? packageIncludedServices.map((item) => item.name).join(", ")
+                    : "Choose a package to see included services."}
+                </Text>
               </View>
             </>
-          )}
+          ) : null}
+
+          <View style={styles.selectionHeader}>
+            <Text style={[styles.selectionTitle, { color: colors.text }]}>
+              {orderMode === "package" ? "Add-on services" : "Services"}
+            </Text>
+            <Text style={[styles.selectionCopy, { color: colors.textSoft }]}>
+              {orderMode === "package"
+                ? "Only services outside the selected package can be added."
+                : "Select one or more services for this order."}
+            </Text>
+          </View>
+
+          <View style={styles.chipWrap}>
+            {serviceOptions.map((service) => {
+              const active = selectedServiceIds.includes(service.id);
+
+              return (
+                <Pressable
+                  key={service.id}
+                  onPress={() => toggleService(service.id)}
+                  style={[
+                    styles.serviceChip,
+                    {
+                      backgroundColor: active ? colors.accent : colors.cardMuted,
+                      borderColor: active ? colors.accent : colors.border,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.serviceChipLabel,
+                      { color: active ? "#042321" : colors.text },
+                    ]}
+                  >
+                    {service.name}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.serviceChipMeta,
+                      { color: active ? "#063c38" : colors.textSoft },
+                    ]}
+                  >
+                    {formatCurrency(service.currentPrice)}
+                    {service.requiresStateFee ? " · State fee" : ""}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </Surface>
 
         <Surface style={styles.card}>
-          <Text style={[styles.sectionEyebrow, { color: colors.textSoft }]}>Payment</Text>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Payment</Text>
           <SegmentedControl
             options={paymentStatusOptions}
             value={paymentStatus}
-            onChange={setPaymentStatus}
+            onChange={(value) => setPaymentStatus(value as PaymentCollectionStatus)}
           />
           {paymentStatus === "partial_paid" ? (
             <TextField
@@ -771,15 +1116,15 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
               onChangeText={setPaidAmount}
             />
           ) : null}
-          <View style={[styles.summaryCard, { backgroundColor: colors.cardMuted }]}>
+          <View style={[styles.summaryCard, { backgroundColor: colors.cardMuted, borderColor: colors.border }]}>
             <Text style={[styles.summaryLine, { color: colors.text }]}>
-              State fee: {formatCurrency(stateFee)}
+              State fee: {formatCurrency(shouldApplyStateFee ? stateFee : 0)}
             </Text>
             <Text style={[styles.summaryLine, { color: colors.text }]}>
               Package: {formatCurrency(orderMode === "package" ? packagePrice : 0)}
             </Text>
             <Text style={[styles.summaryLine, { color: colors.text }]}>
-              Services: {formatCurrency(serviceTotal)}
+              Services: {formatCurrency(selectedServicesPrice)}
             </Text>
             <Text style={[styles.totalLine, { color: colors.text }]}>
               Total: {formatCurrency(totalAmount)}
@@ -788,28 +1133,26 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
         </Surface>
 
         <Surface style={styles.card}>
-          <View style={[styles.rowBetween, compact && styles.rowBetweenStack]}>
-            <View style={styles.titleBlock}>
-              <Text style={[styles.sectionEyebrow, { color: colors.textSoft }]}>
-                Initial documents
-              </Text>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Initial documents</Text>
-            </View>
+          <View style={styles.rowBetween}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Initial documents</Text>
             <Button
-              label="Add row"
+              label="Add Row"
               tone="secondary"
               disabled={documentServiceOptions.length === 0 || submitting}
               onPress={addDocumentRow}
-              style={compact ? styles.fullWidthButton : undefined}
             />
           </View>
           {initialDocuments.length === 0 ? (
             <Text style={[styles.helper, { color: colors.textSoft }]}>
-              Optional. You can add multiple documents for the same service before creating the order.
+              Optional. Add starting documents for selected services before creating the order.
             </Text>
           ) : null}
+
           {initialDocuments.map((row) => (
-            <View key={row.id} style={[styles.documentRow, { backgroundColor: colors.cardMuted }]}>
+            <View
+              key={row.id}
+              style={[styles.documentRow, { backgroundColor: colors.cardMuted, borderColor: colors.border }]}
+            >
               <PickerField
                 label="Service"
                 selectedValue={row.serviceId}
@@ -839,27 +1182,21 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
                 <Text style={[styles.helper, { color: colors.textSoft, flex: 1 }]}>
                   {row.uploadedFileName || "No file selected"}
                 </Text>
-                <View style={[styles.inlineActions, compact && styles.inlineActionsWrap]}>
+                <View style={styles.inlineActions}>
                   <Button
-                    label={row.isUploading ? "Uploading..." : "Choose file"}
+                    label={row.isUploading ? "Uploading..." : "Choose File"}
                     tone="secondary"
                     disabled={row.isUploading}
                     onPress={() => void pickDocumentForRow(row.id)}
-                    style={compact ? styles.inlineButton : undefined}
                   />
-                  <Button
-                    label="Remove"
-                    tone="ghost"
-                    onPress={() => removeDocumentRow(row.id)}
-                    style={compact ? styles.inlineButton : undefined}
-                  />
+                  <Button label="Remove" tone="ghost" onPress={() => removeDocumentRow(row.id)} />
                 </View>
               </View>
             </View>
           ))}
         </Surface>
 
-        <Button label="Create order" loading={submitting} onPress={handleSubmit} />
+        <Button label="Create Order" loading={submitting} onPress={() => void handleSubmit()} />
       </View>
     </Screen>
   );
@@ -867,27 +1204,40 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
 
 const styles = StyleSheet.create({
   stack: {
-    gap: 14,
+    gap: 16,
   },
-  card: {
-    gap: 12,
+  hero: {
+    gap: 8,
+    paddingTop: 4,
   },
-  sectionEyebrow: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 1.4,
+  heroEyebrow: {
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1.2,
     textTransform: "uppercase",
   },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: "800",
+  heroTitle: {
+    fontSize: 30,
+    fontWeight: "900",
+    letterSpacing: -1,
   },
-  titleBlock: {
-    gap: 3,
+  heroCopy: {
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  card: {
+    gap: 14,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "900",
   },
   row: {
     flexDirection: "row",
     gap: 12,
+  },
+  rowStack: {
+    flexDirection: "column",
   },
   rowField: {
     flex: 1,
@@ -895,108 +1245,128 @@ const styles = StyleSheet.create({
   rowFieldStack: {
     flex: 0,
   },
-  rowStack: {
-    flexDirection: "column",
-  },
-  helper: {
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  suggestionPanel: {
-    borderRadius: 8,
-    gap: 2,
-    padding: 4,
-  },
-  suggestionRow: {
-    borderRadius: 8,
-    gap: 2,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-  },
-  suggestionRowPressed: {
-    opacity: 0.8,
-  },
-  suggestionTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  suggestionMeta: {
-    fontSize: 11,
-    fontWeight: "500",
-  },
-  infoPanel: {
-    borderRadius: 8,
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  infoLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.8,
-    textTransform: "uppercase",
-  },
-  infoValue: {
-    fontSize: 14,
-    fontWeight: "600",
-    lineHeight: 20,
-  },
-  chipWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  serviceChip: {
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  serviceChipLabel: {
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  summaryCard: {
-    borderRadius: 8,
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  summaryLine: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  totalLine: {
-    fontSize: 18,
-    fontWeight: "800",
-  },
   rowBetween: {
     alignItems: "center",
     flexDirection: "row",
-    justifyContent: "space-between",
     gap: 12,
+    justifyContent: "space-between",
   },
   rowBetweenStack: {
     alignItems: "flex-start",
     flexDirection: "column",
   },
-  documentRow: {
-    borderRadius: 8,
+  suggestionPanel: {
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: 4,
+    padding: 6,
+  },
+  suggestionRow: {
+    borderRadius: 16,
+    gap: 3,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  suggestionPressed: {
+    opacity: 0.82,
+  },
+  suggestionTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  suggestionMeta: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  userCard: {
+    borderRadius: 20,
+    borderWidth: 1,
     gap: 12,
-    padding: 12,
+    padding: 14,
+  },
+  userTitle: {
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  inlineNotice: {
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  noticeLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+  },
+  noticeText: {
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: "600",
+  },
+  selectionHeader: {
+    gap: 4,
+  },
+  selectionTitle: {
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  selectionCopy: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  chipWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  serviceChip: {
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 4,
+    minWidth: "48%",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  serviceChipLabel: {
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  serviceChipMeta: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  summaryCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  summaryLine: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  totalLine: {
+    fontSize: 20,
+    fontWeight: "900",
+    letterSpacing: -0.5,
+  },
+  helper: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  documentRow: {
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: 12,
+    padding: 14,
   },
   inlineActions: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-  },
-  inlineActionsWrap: {
-    width: "100%",
-  },
-  inlineButton: {
-    flexGrow: 1,
-    minWidth: 132,
-  },
-  fullWidthButton: {
-    alignSelf: "stretch",
   },
 });

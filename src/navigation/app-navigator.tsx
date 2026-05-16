@@ -52,32 +52,34 @@ function AddOrderHeaderButton({
 }
 
 function MainTabsNavigator() {
+  const { colors } = useAppTheme();
+
   return (
     <Tabs.Navigator
       screenOptions={({ navigation, route }) => ({
         headerStyle: {
-          backgroundColor: "#071427",
+          backgroundColor: colors.backgroundSecondary,
         },
         headerShadowVisible: false,
         headerTitleStyle: {
-          color: "#f8fbff",
+          color: colors.text,
           fontSize: 18,
-          fontWeight: "800",
+          fontWeight: "900",
         },
-        headerTintColor: "#dceafc",
-        tabBarActiveTintColor: "#19c4bb",
-        tabBarInactiveTintColor: "rgba(220, 234, 252, 0.52)",
+        headerTintColor: colors.text,
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.textSoft,
         tabBarLabelStyle: {
           fontSize: 11,
-          fontWeight: "700",
+          fontWeight: "800",
           marginBottom: 2,
         },
         tabBarStyle: {
-          backgroundColor: "#071427",
-          borderTopColor: "rgba(255, 255, 255, 0.05)",
-          height: 76,
+          backgroundColor: colors.backgroundSecondary,
+          borderTopColor: colors.border,
+          height: 80,
           paddingBottom: 12,
-          paddingTop: 10,
+          paddingTop: 8,
         },
         headerRight:
           route.name === "Overview" ||
@@ -100,7 +102,7 @@ function MainTabsNavigator() {
           return <Ionicons color={color} name={iconName[route.name]} size={size} />;
         },
         sceneStyle: {
-          backgroundColor: "#020817",
+          backgroundColor: colors.background,
         },
       })}
     >
@@ -145,18 +147,18 @@ export function AppNavigator() {
     <Stack.Navigator
       screenOptions={{
         contentStyle: {
-          backgroundColor: "#020817",
+          backgroundColor: colors.background,
         },
         headerStyle: {
-          backgroundColor: "#071427",
+          backgroundColor: colors.backgroundSecondary,
         },
         headerShadowVisible: false,
         headerTitleStyle: {
-          color: "#f8fbff",
+          color: colors.text,
           fontSize: 18,
-          fontWeight: "700",
+          fontWeight: "900",
         },
-        headerTintColor: "#dceafc",
+        headerTintColor: colors.text,
       }}
     >
       {!isSignedIn ? (

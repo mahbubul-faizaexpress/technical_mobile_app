@@ -22,6 +22,19 @@ export function collectOrderPackageNames(order: OrdersPageItem | StatusBoardOrde
 }
 
 export function buildOrderSummary(order: OrdersPageItem | StatusBoardOrder) {
+  if ("serviceName" in order || "packageName" in order) {
+    return {
+      packageLabel:
+        "packageName" in order && order.packageName?.trim().length
+          ? order.packageName.trim()
+          : "Single service",
+      serviceLabel:
+        "serviceName" in order && order.serviceName?.trim().length
+          ? order.serviceName.trim()
+          : "No service",
+    };
+  }
+
   const packageNames = collectOrderPackageNames(order);
   const serviceNames = collectOrderServiceNames(order);
 
@@ -59,23 +72,12 @@ export function buildOrderFinancialSummary(order: OrdersPageItem) {
 }
 
 export function collectOrderCategoryTags(order: StatusBoardOrder) {
-  const directCategories =
-    order.orderServices?.flatMap(
-      (item) =>
-        item?.service?.serviceCategoryMappings?.map(
-          (mapping) => mapping?.serviceCategory?.name ?? null,
-        ) ?? [],
-    ) ?? [];
-  const packageCategories =
-    order.orderPackages?.flatMap(
-      (item) =>
-        item?.package?.packageServices?.flatMap(
-          (service) =>
-            service?.service?.serviceCategoryMappings?.map(
-              (mapping) => mapping?.serviceCategory?.name ?? null,
-            ) ?? [],
-        ) ?? [],
-    ) ?? [];
+  if (order.serviceCategoryName?.trim()) {
+    return uniqueValues([order.serviceCategoryName]);
+  }
 
-  return uniqueValues([...directCategories, ...packageCategories]);
+  const directCategories =
+    order.availableServiceCategories?.map((item) => item.name ?? null) ?? [];
+
+  return uniqueValues(directCategories);
 }

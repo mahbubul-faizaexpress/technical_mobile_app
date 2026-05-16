@@ -19,7 +19,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     justifyContent: "center",
-    minHeight: 220,
+    minHeight: 240,
   },
   label: {
     fontSize: 14,

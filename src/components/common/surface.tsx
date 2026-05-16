@@ -26,15 +26,15 @@ export function Surface({ style, muted = false, ...props }: SurfaceProps) {
 
 const styles = StyleSheet.create({
   surface: {
-    borderRadius: 8,
-    borderWidth: 0,
-    padding: 12,
+    borderRadius: 24,
+    borderWidth: 1,
+    padding: 16,
     shadowOffset: {
       width: 0,
-      height: 12,
+      height: 18,
     },
-    shadowOpacity: 0.18,
-    shadowRadius: 24,
-    elevation: 0,
+    shadowOpacity: 0.16,
+    shadowRadius: 28,
+    elevation: 1,
   },
 });

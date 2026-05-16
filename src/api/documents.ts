@@ -67,11 +67,14 @@ export const COMPANY_PROFILE_DETAILS_QUERY = `
 
 export const OVERVIEW_STATS_QUERY = `
   query OverviewStats($input: OverviewStatsInput) {
-    overviewStats(input: $input) {
+    technicalOverviewStats(input: $input) {
       totalCompanies
       pendingOrders
       processingOrders
       completedOrders
+      totalPayments
+      totalPartialPayment
+      totalDue
     }
   }
 `;
@@ -169,14 +172,27 @@ export const DASHBOARD_ORDERS_QUERY = `
 
 export const STATUS_BOARD_ORDERS_QUERY = `
   query StatusBoardOrders($input: StatusBoardOrdersInput) {
-    statusBoardOrders(input: $input) {
+    technicalStatusBoardCategories {
+      serviceCategoryId
+      name
+    }
+    technicalStatusBoardOrders(input: $input) {
       items {
         id
         orderId
         status
+        serviceId
+        serviceName
+        packageName
         serviceCategoryId
         serviceCategoryName
         matchedServiceNames
+        retryAvailableAt
+        lastRejectedAt
+        lastRejectedDays
+        rejectionCount
+        allowsRejection
+        isRetryBlocked
         availableServiceCategories {
           serviceCategoryId
           name
@@ -191,9 +207,6 @@ export const STATUS_BOARD_ORDERS_QUERY = `
           description
           attachment
           documentType
-          serviceId
-          serviceCategoryId
-          isStatusOnly
           createdAt
           uploadedBy
           uploadedByUser {
@@ -217,13 +230,6 @@ export const STATUS_BOARD_ORDERS_QUERY = `
           service {
             id
             name
-            serviceCategoryMappings {
-              serviceCategoryId
-              serviceCategory {
-                id
-                name
-              }
-            }
           }
         }
         orderPackages {
@@ -234,13 +240,6 @@ export const STATUS_BOARD_ORDERS_QUERY = `
               service {
                 id
                 name
-                serviceCategoryMappings {
-                  serviceCategoryId
-                  serviceCategory {
-                    id
-                    name
-                  }
-                }
               }
             }
           }
@@ -291,19 +290,21 @@ export const COMPANY_ACCOUNTS_QUERY = `
           status
           submitDate
         }
-        payments {
-          id
-          referenceLabel
-          description
-          totalAmount
-          paidAmount
-          dueAmount
-          currency
-          status
-          latestPaymentMethod
-          latestTransactionStatus
-          latestActivityAt
-          transactionCount
+      payments {
+        id
+        referenceLabel
+        description
+        totalAmount
+        paidAmount
+        dueAmount
+        currency
+        canCollectDue
+        collectDueOrderId
+        status
+        latestPaymentMethod
+        latestTransactionStatus
+        latestActivityAt
+        transactionCount
           transactions {
             id
             transactionId
@@ -362,33 +363,148 @@ export const RECENT_ACTIVITIES_QUERY = `
 
 export const ADD_ORDER_FORM_DATA_QUERY = `
   query AddOrderFormData {
-    companies {
-      id
-      name
-      hasPackageOrder
-      orderedPackageIds
-      orderedServiceIds
-      stateId
-      state {
+    technicalOrderFormData {
+      companies {
         id
         name
-        countryId
-        country {
+        hasPackageOrder
+        orderedPackageIds
+        orderedServiceIds
+        countryProfiles {
+          id
+          countryId
+          stateId
+          companyTypeId
+          serviceTypeId
+          state {
+            id
+            name
+            countryId
+            country {
+              id
+              name
+            }
+          }
+          companyType {
+            id
+            name
+            memberType
+          }
+          serviceType {
+            id
+            name
+          }
+        }
+        stateId
+        state {
+          id
+          name
+          countryId
+          country {
+            id
+            name
+          }
+        }
+        companyTypeId
+        companyType {
+          id
+          name
+          memberType
+        }
+        serviceTypeId
+        serviceType {
           id
           name
         }
+        userId
+        user {
+          id
+          firstName
+          lastName
+          email
+          phone
+          address
+        }
+        users {
+          id
+          firstName
+          lastName
+          email
+          phone
+          address
+        }
       }
-      companyTypeId
-      companyType {
+      companyTypes {
         id
         name
+        memberType
+        isActive
       }
-      serviceTypeId
-      serviceType {
+      companyServiceTypes {
         id
         name
+        isActive
       }
-      userId
+      countries {
+        id
+        name
+        isActive
+        states {
+          id
+          name
+          fee
+          countryId
+          isActive
+        }
+      }
+      packages {
+        id
+        name
+        countryId
+        currentPrice
+        prevPrice
+        isActive
+        packageServices {
+          serviceId
+          service {
+            id
+            name
+          }
+        }
+      }
+      services {
+        id
+        name
+        countryId
+        currentPrice
+        prevPrice
+        deliveryDaysMin
+        deliveryDaysMax
+        requiresStateFee
+        isActive
+        isAddOn
+      }
+    }
+  }
+`;
+
+export const TECHNICAL_ORDER_RESTRICTIONS_QUERY = `
+  query TechnicalOrderRestrictions($input: TechnicalOrderRestrictionsInput!) {
+    technicalOrderRestrictions(input: $input) {
+      companyId
+      countryId
+      stateId
+      scopeType
+      hasPackageOrderInScope
+      blockedPackageIds
+      blockedServiceIds
+    }
+  }
+`;
+
+export const CREATE_TECHNICAL_ORDER_MUTATION = `
+  mutation TechnicalCreateOrder($input: CreateTechnicalOrderInput!) {
+    technicalCreateOrder(input: $input) {
       user {
         id
         firstName
@@ -397,104 +513,44 @@ export const ADD_ORDER_FORM_DATA_QUERY = `
         phone
         address
       }
-    }
-    companyTypes {
-      id
-      name
-      isActive
-    }
-    companyServiceTypes {
-      id
-      name
-      isActive
-    }
-    countries {
-      id
-      name
-      isActive
-      states {
+      company {
         id
         name
-        fee
-        countryId
-        isActive
+        userId
+        companyTypeId
+        serviceTypeId
+        stateId
       }
-    }
-    packages {
-      id
-      name
-      countryId
-      currentPrice
-      isActive
-      packageServices {
-        serviceId
-        service {
-          id
-          name
+      order {
+        id
+        companyId
+        price
+        status
+        startDate
+        endDate
+        orderServices {
+          serviceId
+        }
+        orderPackages {
+          packageId
         }
       }
-    }
-    services {
-      id
-      name
-      countryId
-      currentPrice
-      isActive
-      isAddOn
-    }
-  }
-`;
-
-export const CREATE_USER_MUTATION = `
-  mutation AdminCreateDashboardUser($input: AdminCreateUserInput!) {
-    adminCreateUser(input: $input) {
-      id
-      email
-      firstName
-      lastName
-      phone
-      address
-      role
-      status
-    }
-  }
-`;
-
-export const CREATE_COMPANY_MUTATION = `
-  mutation CreateDashboardCompany($input: CreateCompanyInput!) {
-    createCompany(input: $input) {
-      id
-      name
-      stateId
-      companyTypeId
-      serviceTypeId
-      userId
-    }
-  }
-`;
-
-export const CREATE_ORDER_MUTATION = `
-  mutation CreateDashboardOrder($input: CreateOrderInput!) {
-    createOrder(input: $input) {
-      id
-      companyId
-      price
-      status
-      startDate
-      endDate
-      orderServices {
-        serviceId
+      payment {
+        id
+        amount
+        status
+        paymentMethod
+        currency
+        transactionId
       }
-      orderPackages {
-        packageId
-      }
+      initialDocumentCount
     }
   }
 `;
 
-export const CREATE_PAYMENT_MUTATION = `
-  mutation CreateDashboardPayment($input: CreatePaymentInput!) {
-    createPayment(input: $input) {
+export const CREATE_TECHNICAL_PAYMENT_MUTATION = `
+  mutation CreateTechnicalDashboardPayment($input: CreatePaymentInput!) {
+    createTechnicalPayment(input: $input) {
       id
       amount
       currency
@@ -507,13 +563,30 @@ export const CREATE_PAYMENT_MUTATION = `
 
 export const SUBMIT_ORDER_DOCUMENTS_MUTATION = `
   mutation SubmitOrderDocuments($input: SubmitOrderDocumentsInput!) {
-    submitOrderDocuments(input: $input) {
+    submitTechnicalOrderDocuments(input: $input) {
       orderId
       orderStatus
       submittedDocumentCount
       submittedServiceCount
       createdServiceDocumentCount
       createdDocumentNoteCount
+      serviceDocuments {
+        id
+        description
+        attachment
+        documentType
+        serviceId
+        orderId
+        uploadedBy
+      }
+      documentNotes {
+        id
+        message
+        serviceDocumentId
+        notedBy
+        noteType
+        isSeen
+      }
     }
   }
 `;

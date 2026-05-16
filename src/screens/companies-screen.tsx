@@ -1,12 +1,5 @@
 import { useState } from "react";
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { COMPANY_ACCOUNTS_QUERY } from "@/api/documents";
 import type { CompanyAccount } from "@/api/types";
 import type { MainTabScreenProps } from "@/navigation/types";
@@ -35,8 +28,8 @@ type CompanyAccountsResponse = {
 
 export function CompaniesScreen({ navigation }: MainTabScreenProps<"Companies">) {
   const { colors } = useAppTheme();
-  const { width } = useWindowDimensions();
   const { executeAuthenticated } = useAuth();
+  const { width } = useWindowDimensions();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [country, setCountry] = useState<string | null>(null);
@@ -63,6 +56,14 @@ export function CompaniesScreen({ navigation }: MainTabScreenProps<"Companies">)
   return (
     <Screen onRefresh={() => void resource.reload("refresh")} refreshing={resource.refreshing}>
       <View style={styles.stack}>
+        <View style={styles.hero}>
+          <Text style={[styles.heroEyebrow, { color: colors.accent }]}>Accounts</Text>
+          <Text style={[styles.heroTitle, { color: colors.text }]}>All companies</Text>
+          <Text style={[styles.heroCopy, { color: colors.textSoft }]}>
+            Search companies, inspect service workload, and jump into payment or document details.
+          </Text>
+        </View>
+
         <SearchField
           placeholder="Search company, owner, or email"
           returnKeyType="search"
@@ -84,7 +85,7 @@ export function CompaniesScreen({ navigation }: MainTabScreenProps<"Companies">)
                 style={[
                   styles.countryChip,
                   {
-                    backgroundColor: country === null ? colors.accent : colors.card,
+                    backgroundColor: country === null ? colors.accent : colors.cardMuted,
                     borderColor: country === null ? colors.accent : colors.border,
                   },
                 ]}
@@ -98,6 +99,7 @@ export function CompaniesScreen({ navigation }: MainTabScreenProps<"Companies">)
                   All Countries
                 </Text>
               </Pressable>
+
               {pageData.availableCountries.map((item) => (
                 <Pressable
                   key={item}
@@ -108,7 +110,7 @@ export function CompaniesScreen({ navigation }: MainTabScreenProps<"Companies">)
                   style={[
                     styles.countryChip,
                     {
-                      backgroundColor: country === item ? colors.accent : colors.card,
+                      backgroundColor: country === item ? colors.accent : colors.cardMuted,
                       borderColor: country === item ? colors.accent : colors.border,
                     },
                   ]}
@@ -137,6 +139,7 @@ export function CompaniesScreen({ navigation }: MainTabScreenProps<"Companies">)
             <Text style={[styles.summary, { color: colors.textSoft }]}>
               {pageData.totalCount} companies found
             </Text>
+
             {pageData.items.length === 0 ? (
               <EmptyState
                 title="No companies found"
@@ -159,32 +162,44 @@ export function CompaniesScreen({ navigation }: MainTabScreenProps<"Companies">)
                         <Text style={[styles.name, { color: colors.text }]}>{company.companyName}</Text>
                         <Text style={[styles.owner, { color: colors.textDim }]}>{company.ownerName}</Text>
                       </View>
-                      <Badge label={company.country} tone="accent" />
+                      <View style={styles.badgeStack}>
+                        <Badge label={company.country} tone="accent" />
+                        <Badge label={`${company.pendingServicesCount}`} tone="pending" />
+                      </View>
                     </View>
 
                     <Text style={[styles.meta, { color: colors.textSoft }]}>
-                      {company.email} | {company.phone}
+                      {company.email}
+                    </Text>
+                    <Text style={[styles.meta, { color: colors.textSoft }]}>
+                      {company.phone}
                     </Text>
 
                     <View style={styles.metrics}>
-                      <Badge label={`Pending ${company.pendingOrdersCount}`} tone="pending" />
+                      <Badge label={`Pending ${company.pendingServicesCount}`} tone="pending" />
                       <Badge
-                        label={`Processing ${company.processingOrdersCount}`}
+                        label={`Processing ${company.processingServicesCount}`}
                         tone="processing"
                       />
                       <Badge
-                        label={`Completed ${company.completedOrdersCount}`}
+                        label={`Completed ${company.completedServicesCount}`}
                         tone="completed"
                       />
                     </View>
 
-                    <Text style={[styles.updated, { color: colors.textSoft }]}>
-                      Updated {formatDateTime(company.updatedAt)}
-                    </Text>
+                    <View style={styles.footer}>
+                      <Text style={[styles.updated, { color: colors.textSoft }]}>
+                        Updated {formatDateTime(company.updatedAt)}
+                      </Text>
+                      <Text style={[styles.updatedStrong, { color: colors.text }]}>
+                        {company.totalServicesCount} services
+                      </Text>
+                    </View>
                   </Surface>
                 </Pressable>
               ))
             )}
+
             <View style={[styles.pagination, compact && styles.paginationCompact]}>
               <Button
                 disabled={!pageData.hasPreviousPage}
@@ -193,7 +208,7 @@ export function CompaniesScreen({ navigation }: MainTabScreenProps<"Companies">)
                 onPress={() => setPage((current) => Math.max(1, current - 1))}
                 style={compact ? styles.paginationButton : undefined}
               />
-              <Text style={[styles.page, compact && styles.pageCompact, { color: colors.text }]}>
+              <Text style={[styles.page, { color: colors.text }]}>
                 {pageData.totalPages === 0 ? 0 : page} / {pageData.totalPages}
               </Text>
               <Button
@@ -213,27 +228,45 @@ export function CompaniesScreen({ navigation }: MainTabScreenProps<"Companies">)
 
 const styles = StyleSheet.create({
   stack: {
-    gap: 14,
-    marginTop: 8,
+    gap: 16,
+  },
+  hero: {
+    gap: 8,
+    paddingTop: 4,
+  },
+  heroEyebrow: {
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+  },
+  heroTitle: {
+    fontSize: 30,
+    fontWeight: "900",
+    letterSpacing: -1,
+  },
+  heroCopy: {
+    fontSize: 14,
+    lineHeight: 22,
   },
   countryRow: {
     flexDirection: "row",
     gap: 8,
   },
   countryChip: {
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     justifyContent: "center",
-    minHeight: 40,
+    minHeight: 42,
     paddingHorizontal: 14,
   },
   countryLabel: {
     fontSize: 13,
-    fontWeight: "700",
+    fontWeight: "800",
   },
   summary: {
     fontSize: 13,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   card: {
     gap: 12,
@@ -253,26 +286,42 @@ const styles = StyleSheet.create({
     gap: 4,
     minWidth: 0,
   },
+  badgeStack: {
+    alignItems: "flex-end",
+    gap: 8,
+  },
   name: {
-    fontSize: 18,
-    fontWeight: "800",
+    fontSize: 20,
+    fontWeight: "900",
+    letterSpacing: -0.4,
   },
   owner: {
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   meta: {
     fontSize: 13,
-    lineHeight: 18,
+    lineHeight: 19,
   },
   metrics: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
   },
+  footer: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+    justifyContent: "space-between",
+  },
   updated: {
+    flex: 1,
     fontSize: 12,
     fontWeight: "600",
+  },
+  updatedStrong: {
+    fontSize: 12,
+    fontWeight: "800",
   },
   pagination: {
     alignItems: "center",
@@ -286,16 +335,12 @@ const styles = StyleSheet.create({
   },
   paginationButton: {
     flexGrow: 1,
-    minWidth: 112,
+    minWidth: 110,
   },
   page: {
     fontSize: 14,
-    fontWeight: "700",
+    fontWeight: "800",
     minWidth: 72,
     textAlign: "center",
-  },
-  pageCompact: {
-    minWidth: 64,
-    width: "100%",
   },
 });

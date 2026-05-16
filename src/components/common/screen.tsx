@@ -25,7 +25,7 @@ export function Screen({
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <LinearGradient
-        colors={["#020817", "#071427", "#0a1d33"]}
+        colors={["#04101d", "#08192d", "#0d2740"]}
         style={StyleSheet.absoluteFill}
       />
       <ScrollView
@@ -60,7 +60,7 @@ export function InlineScreen({ children }: { children: ReactNode }) {
   return (
     <View style={styles.inlineScreen}>
       <LinearGradient
-        colors={["#020817", "#071427", "#0a1d33"]}
+        colors={["#04101d", "#08192d", "#0d2740"]}
         style={StyleSheet.absoluteFill}
       />
       {children}
@@ -85,9 +85,9 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   padded: {
-    paddingHorizontal: 14,
-    paddingBottom: 22,
-    paddingTop: 14,
+    paddingHorizontal: 16,
+    paddingBottom: 28,
+    paddingTop: 16,
   },
   inlineScreen: {
     flex: 1,

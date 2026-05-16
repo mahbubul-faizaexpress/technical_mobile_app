@@ -15,7 +15,7 @@ export function IconButton({ children, style, ...props }: IconButtonProps) {
         styles.button,
         {
           backgroundColor: colors.cardMuted,
-          borderColor: "transparent",
+          borderColor: colors.border,
           opacity: state.pressed ? 0.88 : 1,
         },
         typeof style === "function" ? style(state) : style,
@@ -30,10 +30,10 @@ export function IconButton({ children, style, ...props }: IconButtonProps) {
 const styles = StyleSheet.create({
   button: {
     alignItems: "center",
-    borderRadius: 8,
+    borderRadius: 16,
     borderWidth: 1,
-    height: 40,
+    height: 42,
     justifyContent: "center",
-    width: 40,
+    width: 42,
   },
 });

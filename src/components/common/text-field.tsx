@@ -59,16 +59,16 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 12,
     fontWeight: "700",
-    letterSpacing: 0.4,
+    letterSpacing: 0.9,
     textTransform: "uppercase",
   },
   input: {
-    borderRadius: 8,
-    borderWidth: 0,
+    borderRadius: 18,
+    borderWidth: 1,
     fontSize: 15,
-    minHeight: 46,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    minHeight: 52,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
   message: {
     fontSize: 12,

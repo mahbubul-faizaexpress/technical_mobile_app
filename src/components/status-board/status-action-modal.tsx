@@ -1,7 +1,6 @@
 import * as DocumentPicker from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Alert,
   Modal,
@@ -9,19 +8,21 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { uploadDocumentToCloudinary } from "@/api/cloudinary";
 import { SUBMIT_ORDER_DOCUMENTS_MUTATION } from "@/api/documents";
-import type { OrderStatus, StatusBoardDocument, StatusBoardOrder } from "@/api/types";
+import type { OrderStatus, StatusBoardOrder } from "@/api/types";
+import { Badge } from "@/components/common/badge";
 import { Button } from "@/components/common/button";
 import { IconButton } from "@/components/common/icon-button";
-import { PickerField } from "@/components/common/picker-field";
+import { SegmentedControl } from "@/components/common/segmented-control";
+import { Surface } from "@/components/common/surface";
+import { TextField } from "@/components/common/text-field";
 import { useAppConfig } from "@/providers/app-config-provider";
 import { useAuth } from "@/providers/auth-provider";
 import { useAppTheme } from "@/theme/theme-provider";
-import { openDocumentPreview, resolveDocumentFileName } from "@/utils/documents";
+import { downloadDocument, openDocumentPreview, resolveDocumentFileName } from "@/utils/documents";
 import { formatDateTime, formatOrderStatusLabel } from "@/utils/format";
 
 type WorkflowFile = {
@@ -34,13 +35,6 @@ type WorkflowFile = {
   title: string;
 };
 
-type WorkflowRow = {
-  id: string;
-  categoryId: string;
-  files: WorkflowFile[];
-  statusOnly: boolean;
-};
-
 type StatusActionModalProps = {
   currentStatus: OrderStatus;
   onClose: () => void;
@@ -48,15 +42,15 @@ type StatusActionModalProps = {
   order: StatusBoardOrder;
 };
 
-const ALL_SERVICES_VALUE = "__all_services__";
+type ProcessingDecision = "approve" | "reject";
 
-function createWorkflowRow(categoryId = ""): WorkflowRow {
-  return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    categoryId,
-    files: [],
-    statusOnly: true,
-  };
+const processingDecisionOptions = [
+  { label: "Approve", value: "approve" },
+  { label: "Reject", value: "reject" },
+] as const;
+
+function createLocalId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function formatFileSize(size?: number | null) {
@@ -92,79 +86,31 @@ function splitFileName(value: string) {
   };
 }
 
-function getTargetStatus(status: OrderStatus) {
+function getTargetStatus(status: OrderStatus, isRejectDecision: boolean) {
   if (status === "PENDING") {
     return "PROCESSING" as const;
   }
 
   if (status === "PROCESSING") {
-    return "COMPLETED" as const;
+    return isRejectDecision ? ("PENDING" as const) : ("COMPLETED" as const);
   }
 
   return null;
 }
 
-function getDocumentModeLabel(status: OrderStatus) {
-  return status === "PROCESSING" ? "Received files" : "Submitted files";
-}
+function getLatestDocumentNote(order: StatusBoardOrder, documentId: number) {
+  const targetDocument = order.serviceDocuments?.find((document) => document?.id === documentId);
+  const notes =
+    targetDocument?.documentNotes?.filter((note): note is NonNullable<typeof note> => Boolean(note)) ?? [];
 
-function collectOrderCategoryOptions(order: StatusBoardOrder) {
-  const mappedCategories = [
-    ...(order.orderServices?.flatMap(
-      (item) =>
-        item?.service?.serviceCategoryMappings?.map((mapping) => ({
-          serviceCategoryId: mapping?.serviceCategoryId ?? 0,
-          name: mapping?.serviceCategory?.name?.trim() ?? "",
-        })) ?? [],
-    ) ?? []),
-    ...(order.orderPackages?.flatMap(
-      (item) =>
-        item?.package?.packageServices?.flatMap(
-          (packageService) =>
-            packageService?.service?.serviceCategoryMappings?.map((mapping) => ({
-              serviceCategoryId: mapping?.serviceCategoryId ?? 0,
-              name: mapping?.serviceCategory?.name?.trim() ?? "",
-            })) ?? [],
-        ) ?? [],
-    ) ?? []),
-  ];
-
-  const resolvedCategories = mappedCategories.filter(
-    (item) => item.serviceCategoryId > 0 && item.name.length > 0,
-  );
-
-  if (resolvedCategories.length > 0) {
-    return Array.from(
-      new Map(
-        resolvedCategories.map((item) => [item.serviceCategoryId, item]),
-      ).values(),
-    );
+  if (notes.length === 0) {
+    return null;
   }
 
-  if (order.availableServiceCategories.length > 0) {
-    return Array.from(
-      new Map(
-        order.availableServiceCategories
-          .map((item) => ({
-            serviceCategoryId: item.serviceCategoryId,
-            name: item.name.trim(),
-          }))
-          .filter((item) => item.serviceCategoryId > 0 && item.name.length > 0)
-          .map((item) => [item.serviceCategoryId, item]),
-      ).values(),
-    );
-  }
-
-  return order.serviceCategoryId > 0 && order.serviceCategoryName.trim().length > 0
-    ? [
-        {
-          serviceCategoryId: order.serviceCategoryId,
-          name: order.serviceCategoryName.trim(),
-        },
-      ]
-    : [];
+  return notes.sort((left, right) => {
+    return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+  })[0];
 }
-
 
 export function StatusActionModal({
   currentStatus,
@@ -175,215 +121,35 @@ export function StatusActionModal({
   const { colors } = useAppTheme();
   const { config } = useAppConfig();
   const { executeAuthenticated } = useAuth();
-  const [rows, setRows] = useState<WorkflowRow[]>([createWorkflowRow("")]);
+  const [files, setFiles] = useState<WorkflowFile[]>([]);
+  const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [editingFile, setEditingFile] = useState<{
-    fileId: string;
-    rowId: string;
-  } | null>(null);
-  const lastTapRef = useRef<{
-    fileId: string;
-    rowId: string;
-    timestamp: number;
-  } | null>(null);
+  const [processingDecision, setProcessingDecision] = useState<ProcessingDecision>("approve");
 
-  const targetStatus = getTargetStatus(currentStatus);
-  const allOrderCategoryOptions = useMemo(
-    () =>
-      collectOrderCategoryOptions(order).filter(
-        (item, index, collection) =>
-          collection.findIndex(
-            (current) => current.serviceCategoryId === item.serviceCategoryId,
-          ) === index,
-      ),
-    [order],
-  );
-  const categoryOptions = useMemo(() => {
-    const availableCategoryOptions = Array.from(
-      new Map(
-        order.availableServiceCategories
-          .map((item) => {
-            const mappedMatch = allOrderCategoryOptions.find(
-              (current) => current.serviceCategoryId === item.serviceCategoryId,
-            );
+  const isCompletedFlow = currentStatus === "COMPLETED";
+  const canReject = currentStatus === "PROCESSING" && Boolean(order.allowsRejection);
+  const isRejectDecision = canReject && processingDecision === "reject";
+  const targetStatus = getTargetStatus(currentStatus, isRejectDecision);
 
-            return {
-              serviceCategoryId: item.serviceCategoryId,
-              name: mappedMatch?.name ?? item.name.trim(),
-            };
-          })
-          .filter((item) => item.serviceCategoryId > 0 && item.name.length > 0)
-          .map((item) => [item.serviceCategoryId, item]),
-      ).values(),
-    );
-
-    if (availableCategoryOptions.length > 0) {
-      return availableCategoryOptions;
-    }
-
-    const submittedCategoryIds = new Set<number>();
-    const receivedCategoryIds = new Set<number>();
-
-    for (const document of order.serviceDocuments ?? []) {
-      if (!document?.serviceCategoryId) {
-        continue;
-      }
-
-      if (document.documentType === "RECEIVED") {
-        receivedCategoryIds.add(document.serviceCategoryId);
-      } else {
-        submittedCategoryIds.add(document.serviceCategoryId);
-      }
-    }
-
-    if (currentStatus === "PENDING") {
-      return allOrderCategoryOptions.filter(
-        (item) =>
-          !submittedCategoryIds.has(item.serviceCategoryId) &&
-          !receivedCategoryIds.has(item.serviceCategoryId),
-      );
-    }
-
-    return allOrderCategoryOptions.filter(
-      (item) =>
-        submittedCategoryIds.has(item.serviceCategoryId) &&
-        !receivedCategoryIds.has(item.serviceCategoryId),
-    );
-  }, [
-    allOrderCategoryOptions,
-    order.availableServiceCategories,
-    order.serviceDocuments,
-    currentStatus,
-  ]);
-  const defaultCategoryId = useMemo(
-    () => (categoryOptions[0] ? String(categoryOptions[0].serviceCategoryId) : ""),
-    [categoryOptions],
-  );
-  const hasAllServicesRow = useMemo(
-    () => rows.some((row) => row.categoryId === ALL_SERVICES_VALUE),
-    [rows],
-  );
-  const selectedRows = useMemo(
-    () => rows.filter((row) => row.categoryId.trim().length > 0),
-    [rows],
-  );
-  const hasRowsWithFilesMissingCategory = useMemo(
-    () => rows.some((row) => !row.categoryId.trim() && row.files.length > 0),
-    [rows],
-  );
   const canSubmit = useMemo(
     () =>
-      selectedRows.length > 0 &&
-      !hasRowsWithFilesMissingCategory &&
-      selectedRows.every((row) => row.statusOnly || row.files.length > 0) &&
-      rows.every(
-        (row) =>
-          !row.files.some((file) => file.isUploading) &&
-          row.files.every((file) => file.attachmentUrl.trim()),
-      ),
-    [hasRowsWithFilesMissingCategory, rows, selectedRows],
+      files.every((file) => !file.isUploading && file.attachmentUrl.trim().length > 0) &&
+      !submitting,
+    [files, submitting],
   );
-  const canAddRow = useMemo(() => {
-    if (hasAllServicesRow) {
-      return false;
-    }
 
-    const selectedCategoryIds = new Set(
-      rows
-        .filter(
-          (row) =>
-            row.categoryId.trim().length > 0 &&
-            row.categoryId !== ALL_SERVICES_VALUE,
-        )
-        .map((row) => row.categoryId),
-    );
+  const completedDocuments = useMemo(
+    () =>
+      (order.serviceDocuments ?? [])
+        .filter((document): document is NonNullable<typeof document> => Boolean(document))
+        .sort(
+          (left, right) =>
+            new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+        ),
+    [order.serviceDocuments],
+  );
 
-    return selectedCategoryIds.size < categoryOptions.length;
-  }, [categoryOptions.length, hasAllServicesRow, rows]);
-
-  const getAvailableCategoryOptionsForRow = (rowId: string) => {
-    const selectedCategoryIds = new Set(
-      rows
-        .filter(
-          (row) =>
-            row.id !== rowId &&
-            row.categoryId.trim().length > 0 &&
-            row.categoryId !== ALL_SERVICES_VALUE,
-        )
-        .map((row) => row.categoryId),
-    );
-    const currentRow = rows.find((row) => row.id === rowId);
-
-    return [
-      { label: "Choose category", value: "" },
-      ...(categoryOptions.length > 0
-        ? [
-            {
-              label: "All services",
-              value: ALL_SERVICES_VALUE,
-            },
-          ]
-        : []),
-      ...categoryOptions
-        .filter(
-          (item) =>
-            currentRow?.categoryId === String(item.serviceCategoryId) ||
-            !selectedCategoryIds.has(String(item.serviceCategoryId)),
-        )
-        .map((item) => ({
-          label: item.name,
-          value: String(item.serviceCategoryId),
-        })),
-    ];
-  };
-
-  useEffect(() => {
-    if (categoryOptions.length === 0) {
-      return;
-    }
-
-    setRows((current) => {
-      const usedCategoryIds = new Set<string>();
-      let changed = false;
-
-      const nextRows = current.map((row) => {
-        if (row.categoryId === ALL_SERVICES_VALUE) {
-          return row;
-        }
-
-        const stillValid = categoryOptions.some(
-          (item) => String(item.serviceCategoryId) === row.categoryId,
-        );
-
-        if (stillValid) {
-          usedCategoryIds.add(row.categoryId);
-          return row;
-        }
-
-        const replacement =
-          categoryOptions.find(
-            (item) => !usedCategoryIds.has(String(item.serviceCategoryId)),
-          ) ?? categoryOptions[0];
-        const replacementId = replacement ? String(replacement.serviceCategoryId) : "";
-
-        if (!replacementId) {
-          return row;
-        }
-
-        usedCategoryIds.add(replacementId);
-        changed = true;
-
-        return {
-          ...row,
-          categoryId: replacementId,
-        };
-      });
-
-      return changed ? nextRows : current;
-    });
-  }, [categoryOptions, defaultCategoryId]);
-
-  const pickFilesForRow = async (rowId: string) => {
+  const pickFiles = async () => {
     const result = await DocumentPicker.getDocumentAsync({
       copyToCacheDirectory: true,
       multiple: true,
@@ -398,7 +164,7 @@ export function StatusActionModal({
       const parsed = splitFileName(asset.name);
 
       return {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: createLocalId(),
         attachmentUrl: "",
         extension: parsed.extension,
         isUploading: true,
@@ -408,16 +174,7 @@ export function StatusActionModal({
       } satisfies WorkflowFile;
     });
 
-    setRows((current) =>
-      current.map((row) =>
-        row.id === rowId
-          ? {
-              ...row,
-              files: [...row.files, ...provisionalFiles],
-            }
-          : row,
-      ),
-    );
+    setFiles((current) => [...current, ...provisionalFiles]);
 
     for (const [index, asset] of result.assets.entries()) {
       const fileId = provisionalFiles[index]?.id;
@@ -434,36 +191,20 @@ export function StatusActionModal({
           webAppUrl: config.webAppUrl,
         });
 
-        setRows((current) =>
-          current.map((row) =>
-            row.id === rowId
+        setFiles((current) =>
+          current.map((file) =>
+            file.id === fileId
               ? {
-                  ...row,
-                  files: row.files.map((file) =>
-                    file.id === fileId
-                      ? {
-                          ...file,
-                          attachmentUrl: uploadResult.secureUrl,
-                          isUploading: false,
-                          originalName: uploadResult.originalFileName,
-                        }
-                      : file,
-                  ),
+                  ...file,
+                  attachmentUrl: uploadResult.secureUrl,
+                  isUploading: false,
+                  originalName: uploadResult.originalFileName,
                 }
-              : row,
+              : file,
           ),
         );
       } catch (error) {
-        setRows((current) =>
-          current.map((row) =>
-            row.id === rowId
-              ? {
-                  ...row,
-                  files: row.files.filter((file) => file.id !== fileId),
-                }
-              : row,
-          ),
-        );
+        setFiles((current) => current.filter((file) => file.id !== fileId));
 
         Alert.alert(
           "Upload failed",
@@ -473,114 +214,50 @@ export function StatusActionModal({
     }
   };
 
-  const handleFileNamePress = (rowId: string, fileId: string) => {
-    const now = Date.now();
-
-    if (
-      lastTapRef.current &&
-      lastTapRef.current.rowId === rowId &&
-      lastTapRef.current.fileId === fileId &&
-      now - lastTapRef.current.timestamp < 320
-    ) {
-      setEditingFile({ rowId, fileId });
-      lastTapRef.current = null;
-      return;
-    }
-
-    lastTapRef.current = {
-      rowId,
-      fileId,
-      timestamp: now,
-    };
-  };
-
   const handleSubmit = async () => {
-    if (!targetStatus) {
+    if (!targetStatus || !order.serviceId) {
       onClose();
       return;
     }
-
-    if (hasRowsWithFilesMissingCategory) {
-      Alert.alert("Select category", "Choose a service category before uploading files.");
-      return;
-    }
-
-    const statusOnlyCategoryIds = Array.from(
-      new Set(
-        selectedRows.flatMap((row) =>
-          row.categoryId === ALL_SERVICES_VALUE
-            ? categoryOptions.map((item) => item.serviceCategoryId)
-            : row.statusOnly
-              ? [Number(row.categoryId)].filter(
-                  (value) => Number.isInteger(value) && value > 0,
-                )
-              : [],
-        ),
-      ),
-    );
-
-    const selectedCategoryIds = Array.from(
-      new Set(
-        selectedRows.flatMap((row) =>
-          row.categoryId === ALL_SERVICES_VALUE
-            ? categoryOptions.map((item) => item.serviceCategoryId)
-            : [Number(row.categoryId)].filter(
-                (value) => Number.isInteger(value) && value > 0,
-              ),
-        ),
-      ),
-    );
-
-    if (!selectedCategoryIds.length) {
-      Alert.alert("Select category", "Choose at least one service category.");
-      return;
-    }
-
-    if (selectedRows.some((row) => !row.statusOnly && row.files.length === 0)) {
-      Alert.alert("Add files", "Choose at least one file when status-only is turned off.");
-      return;
-    }
-
-    const documents = selectedRows.flatMap((row) =>
-      row.statusOnly
-        ? []
-        : row.files
-            .filter((file) => file.attachmentUrl.trim())
-            .map((file) => ({
-              attachment: file.attachmentUrl.trim(),
-              documentName: `${file.title.trim() || "document"}${file.extension}`,
-              ...(row.categoryId === ALL_SERVICES_VALUE
-                ? {}
-                : {
-                    serviceCategoryId: Number(row.categoryId),
-                  }),
-            })),
-    );
 
     try {
       setSubmitting(true);
 
       await executeAuthenticated<
-        { submitOrderDocuments: { orderId: number; orderStatus: OrderStatus } },
+        { submitTechnicalOrderDocuments: { orderId: number; orderStatus: OrderStatus } },
         {
           input: {
+            decision?: "APPROVE" | "REJECT";
             documents?: Array<{
               attachment: string;
               documentName: string;
-              serviceCategoryId?: number;
+              serviceId: number;
             }>;
+            note?: string;
             orderId: number;
-            statusOnlyCategoryIds?: number[];
+            statusOnlyServiceIds?: number[];
             workflowStatus: OrderStatus;
           };
         }
       >(SUBMIT_ORDER_DOCUMENTS_MUTATION, {
         input: {
-          orderId: order.orderId,
-          ...(documents.length ? { documents } : {}),
-          ...(statusOnlyCategoryIds.length
-            ? { statusOnlyCategoryIds: statusOnlyCategoryIds }
+          ...(canReject
+            ? {
+                decision: isRejectDecision ? "REJECT" : "APPROVE",
+              }
             : {}),
+          ...(files.length
+            ? {
+                documents: files.map((file) => ({
+                  attachment: file.attachmentUrl.trim(),
+                  documentName: `${file.title.trim() || "document"}${file.extension}`,
+                  serviceId: order.serviceId ?? 0,
+                })),
+              }
+            : {}),
+          ...(note.trim().length ? { note: note.trim() } : {}),
+          orderId: order.orderId,
+          statusOnlyServiceIds: [order.serviceId],
           workflowStatus: currentStatus,
         },
       });
@@ -590,7 +267,7 @@ export function StatusActionModal({
     } catch (error) {
       Alert.alert(
         "Update failed",
-        error instanceof Error ? error.message : "Could not update order.",
+        error instanceof Error ? error.message : "Could not update this service.",
       );
     } finally {
       setSubmitting(false);
@@ -600,13 +277,20 @@ export function StatusActionModal({
   return (
     <Modal animationType="fade" transparent visible onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <LinearGradient colors={["rgba(2,8,23,0.94)", "rgba(7,20,39,0.96)"]} style={styles.sheet}>
+        <Surface style={styles.sheet}>
           <View style={styles.header}>
             <View style={styles.headerCopy}>
-              <Text style={styles.title}>Order #{order.orderId}</Text>
-              <Text style={[styles.subtitle, { color: colors.textSoft }]}>
-                {order.companyInfo?.name ?? "Unknown company"} · {formatOrderStatusLabel(currentStatus)}
+              <Text style={[styles.title, { color: colors.text }]}>
+                {order.serviceName || "Service"}
               </Text>
+              <Text style={[styles.subtitle, { color: colors.textSoft }]}>
+                Order #{order.orderId} · {order.companyInfo?.name ?? "Unknown company"}
+              </Text>
+              {order.packageName?.trim() ? (
+                <Text style={[styles.subtitle, { color: colors.textSoft }]}>
+                  Package · {order.packageName}
+                </Text>
+              ) : null}
             </View>
             <IconButton onPress={onClose}>
               <Ionicons color={colors.text} name="close" size={18} />
@@ -614,213 +298,82 @@ export function StatusActionModal({
           </View>
 
           <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-            <View style={[styles.infoBand, { backgroundColor: colors.cardMuted }]}>
-              <Text style={[styles.infoLabel, { color: colors.textSoft }]}>
-                {targetStatus ? `Move to ${formatOrderStatusLabel(targetStatus)}` : "No next status"}
-              </Text>
-              <Text style={[styles.infoValue, { color: colors.text }]}>
-                {getDocumentModeLabel(currentStatus)}
-              </Text>
-              <Text style={[styles.infoHint, { color: colors.textSoft }]}>
-                Add files if needed, or submit without files to update status only.
-              </Text>
+            <View style={styles.infoRow}>
+              <Badge label={formatOrderStatusLabel(currentStatus)} tone="processing" />
+              {targetStatus ? (
+                <Badge
+                  label={
+                    currentStatus === "PROCESSING" && isRejectDecision
+                      ? "Back to Pending"
+                      : `Move to ${formatOrderStatusLabel(targetStatus)}`
+                  }
+                  tone={isRejectDecision ? "pending" : "accent"}
+                />
+              ) : null}
             </View>
 
-            {rows.map((row, index) => (
-              <View key={row.id} style={[styles.rowBlock, { backgroundColor: colors.card }]}>
-                <View style={styles.rowHeader}>
-                  <Text style={[styles.rowTitle, { color: colors.text }]}>
-                    Category {index + 1}
-                  </Text>
-                  {rows.length > 1 ? (
-                    <IconButton
-                      onPress={() => {
-                        setRows((current) => current.filter((item) => item.id !== row.id));
-                      }}
-                    >
-                      <Ionicons color={colors.text} name="trash-outline" size={18} />
-                    </IconButton>
-                  ) : null}
-                </View>
+            {order.lastRejectedAt && currentStatus === "PENDING" ? (
+              <Surface muted style={styles.rejectedNotice}>
+                <Text style={[styles.rejectedTitle, { color: colors.danger }]}>
+                  Rejected on {formatDateTime(order.lastRejectedAt)}
+                </Text>
+                <Text style={[styles.rejectedCopy, { color: colors.textSoft }]}>
+                  This service was returned to pending. You can resubmit it any time.
+                </Text>
+              </Surface>
+            ) : null}
 
-                <PickerField
-                  label="Category"
-                  selectedValue={row.categoryId}
-                  options={getAvailableCategoryOptionsForRow(row.id)}
-                  onValueChange={(value) => {
-                    setRows((current) => {
-                      const nextRows = current.map((item) =>
-                        item.id === row.id
-                          ? {
-                              ...item,
-                              categoryId: value,
-                              statusOnly:
-                                value === ALL_SERVICES_VALUE && !item.categoryId.trim()
-                                  ? true
-                                  : item.statusOnly,
-                            }
-                          : item,
-                      );
+            {canReject ? (
+              <SegmentedControl
+                options={processingDecisionOptions}
+                value={processingDecision}
+                onChange={(value) => setProcessingDecision(value as ProcessingDecision)}
+              />
+            ) : null}
 
-                      if (value === ALL_SERVICES_VALUE) {
-                        return nextRows.filter((item) => item.id === row.id);
-                      }
+            {isCompletedFlow ? (
+              completedDocuments.length ? (
+                completedDocuments.map((document) => {
+                  const noteItem = getLatestDocumentNote(order, document.id);
+                  const hasAttachment = Boolean(document.attachment?.trim());
+                  const fileName = resolveDocumentFileName({
+                    title: document.description,
+                    attachment: document.attachment ?? "",
+                    fallback: `document-${document.id}.pdf`,
+                  });
 
-                      return nextRows;
-                    });
-                  }}
-                />
-
-                {row.categoryId.trim().length > 0 ? (
-                  <View style={[styles.modeRow, { backgroundColor: colors.cardMuted }]}>
-                    <View style={styles.modeCopy}>
-                      <Text style={[styles.modeLabel, { color: colors.text }]}>
-                        {targetStatus ? formatOrderStatusLabel(targetStatus) : "Status update"}
-                      </Text>
-                      {(() => {
-                        const modeHint =
-                          row.categoryId === ALL_SERVICES_VALUE
-                            ? row.statusOnly
-                              ? "All services will move without files."
-                              : "Files will be submitted for all services."
-                            : "";
-
-                        return modeHint ? (
-                          <Text style={[styles.modeHint, { color: colors.textSoft }]}>
-                            {modeHint}
+                  return (
+                    <Surface key={document.id} muted style={styles.documentCard}>
+                      <View style={styles.documentHeader}>
+                        <View style={styles.documentCopy}>
+                          <Text style={[styles.documentName, { color: colors.text }]}>
+                            {document.description}
                           </Text>
-                        ) : null;
-                      })()}
-                    </View>
-                    <Pressable
-                      onPress={() => {
-                        setRows((current) =>
-                          current.map((item) =>
-                            item.id === row.id
-                              ? {
-                                  ...item,
-                                  statusOnly: !item.statusOnly,
-                                  files: item.statusOnly ? item.files : [],
-                                }
-                              : item,
-                          ),
-                        );
-                      }}
-                      style={({ pressed }) => [
-                        styles.switch,
-                        {
-                          backgroundColor: row.statusOnly ? colors.accent : colors.muted,
-                          opacity: pressed ? 0.88 : 1,
-                        },
-                      ]}
-                    >
-                      <View
-                        style={[
-                          styles.switchThumb,
-                          row.statusOnly ? styles.switchThumbOn : styles.switchThumbOff,
-                        ]}
-                      />
-                    </Pressable>
-                  </View>
-                ) : null}
-
-                <View style={styles.actionRow}>
-                  {!row.statusOnly ? (
-                    <Button
-                      disabled={!row.categoryId.trim()}
-                      label="Add files"
-                      tone="secondary"
-                      onPress={() => void pickFilesForRow(row.id)}
-                    />
-                  ) : null}
-                  <Button
-                    label="Add category"
-                    tone="ghost"
-                    disabled={!canAddRow || hasAllServicesRow}
-                    onPress={() => {
-                      setRows((current) => [...current, createWorkflowRow("")]);
-                    }}
-                  />
-                </View>
-
-                {!row.statusOnly && row.files.length ? (
-                  <View style={styles.files}>
-                    {row.files.map((file) => {
-                      const fileName = `${file.title}${file.extension}`;
-                      const previewName = resolveDocumentFileName({
-                        title: fileName,
-                        attachment: file.attachmentUrl,
-                        fallback: file.originalName,
-                      });
-                      const editing =
-                        editingFile?.rowId === row.id && editingFile.fileId === file.id;
-
-                      return (
-                        <View
-                          key={file.id}
-                          style={[styles.fileItem, { backgroundColor: colors.cardMuted }]}
-                        >
-                          <View style={styles.fileCopy}>
-                            {editing ? (
-                              <View style={styles.fileNameRow}>
-                                <TextInput
-                                  autoFocus
-                                  onBlur={() => setEditingFile(null)}
-                                  onChangeText={(value) => {
-                                    setRows((current) =>
-                                      current.map((currentRow) =>
-                                        currentRow.id === row.id
-                                          ? {
-                                              ...currentRow,
-                                              files: currentRow.files.map((currentFile) =>
-                                                currentFile.id === file.id
-                                                  ? {
-                                                      ...currentFile,
-                                                      title: value,
-                                                    }
-                                                  : currentFile,
-                                              ),
-                                            }
-                                          : currentRow,
-                                      ),
-                                    );
-                                  }}
-                                  style={[styles.fileInput, { color: colors.text }]}
-                                  value={file.title}
-                                />
-                                <Text style={[styles.fileExtension, { color: colors.textSoft }]}>
-                                  {file.extension}
-                                </Text>
-                              </View>
-                            ) : (
-                              <Pressable onPress={() => handleFileNamePress(row.id, file.id)}>
-                                <Text style={[styles.fileTitle, { color: colors.text }]}>
-                                  {fileName}
-                                </Text>
-                              </Pressable>
-                            )}
-                            <Text style={[styles.fileMeta, { color: colors.textSoft }]}>
-                              {file.sizeLabel} · {file.isUploading ? "Uploading..." : "Ready"}
+                          <Text style={[styles.documentMeta, { color: colors.textSoft }]}>
+                            {formatDateTime(document.createdAt)} · {document.uploadedBy}
+                          </Text>
+                          <Text style={[styles.documentNote, { color: colors.accentStrong }]}>
+                            <Text style={styles.documentNoteStrong}>Note: </Text>
+                            <Text style={styles.documentNoteStrong}>
+                              {noteItem?.message?.trim() || "-"}
                             </Text>
-                          </View>
-                          <View style={styles.fileActions}>
-                            <IconButton
-                              disabled={!file.attachmentUrl}
-                              onPress={() => {
-                                if (!file.attachmentUrl) {
-                                  return;
-                                }
+                          </Text>
+                        </View>
 
+                        {hasAttachment ? (
+                          <View style={styles.documentActions}>
+                            <IconButton
+                              onPress={() => {
                                 void openDocumentPreview(
                                   config,
-                                  file.attachmentUrl,
-                                  previewName,
+                                  document.attachment ?? "",
+                                  fileName,
                                 ).catch((error) => {
                                   Alert.alert(
                                     "Preview failed",
                                     error instanceof Error
                                       ? error.message
-                                      : "Could not open file.",
+                                      : "Could not open document.",
                                   );
                                 });
                               }}
@@ -829,55 +382,111 @@ export function StatusActionModal({
                             </IconButton>
                             <IconButton
                               onPress={() => {
-                                setRows((current) =>
-                                  current.map((currentRow) =>
-                                    currentRow.id === row.id
-                                      ? {
-                                          ...currentRow,
-                                          files: currentRow.files.filter(
-                                            (currentFile) => currentFile.id !== file.id,
-                                          ),
-                                        }
-                                      : currentRow,
-                                  ),
-                                );
+                                void downloadDocument(
+                                  config,
+                                  document.attachment ?? "",
+                                  fileName,
+                                ).catch((error) => {
+                                  Alert.alert(
+                                    "Download failed",
+                                    error instanceof Error
+                                      ? error.message
+                                      : "Could not download document.",
+                                  );
+                                });
                               }}
                             >
-                              <Ionicons color={colors.text} name="trash-outline" size={18} />
+                              <Ionicons color={colors.text} name="download-outline" size={18} />
                             </IconButton>
                           </View>
-                        </View>
-                      );
-                    })}
-                  </View>
-                ) : !row.statusOnly ? (
-                  <Text style={[styles.emptyFiles, { color: colors.textSoft }]}>
-                    {row.categoryId === ALL_SERVICES_VALUE
-                      ? "No files selected yet. Add one or more files for all services."
-                      : "No files selected yet. Add one or more files for this category."}
+                        ) : null}
+                      </View>
+                    </Surface>
+                  );
+                })
+              ) : (
+                <Surface muted style={styles.rejectedNotice}>
+                  <Text style={[styles.rejectedTitle, { color: colors.text }]}>
+                    No documents available
                   </Text>
-                ) : null}
-              </View>
-            ))}
+                  <Text style={[styles.rejectedCopy, { color: colors.textSoft }]}>
+                    This completed service does not have uploaded documents or notes yet.
+                  </Text>
+                </Surface>
+              )
+            ) : (
+              <>
+                <View style={styles.rowBetween}>
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Documents</Text>
+                  <Button
+                    label="Choose Files"
+                    tone="secondary"
+                    onPress={() => void pickFiles()}
+                  />
+                </View>
 
+                {files.length ? (
+                  files.map((file) => (
+                    <Surface key={file.id} muted style={styles.fileCard}>
+                      <View style={styles.documentHeader}>
+                        <View style={styles.documentCopy}>
+                          <Text style={[styles.documentName, { color: colors.text }]}>
+                            {file.title}
+                            {file.extension}
+                          </Text>
+                          <Text style={[styles.documentMeta, { color: colors.textSoft }]}>
+                            {file.sizeLabel} · {file.isUploading ? "Uploading..." : "Ready"}
+                          </Text>
+                        </View>
+                        <IconButton
+                          onPress={() => {
+                            setFiles((current) => current.filter((item) => item.id !== file.id));
+                          }}
+                        >
+                          <Ionicons color={colors.text} name="trash-outline" size={18} />
+                        </IconButton>
+                      </View>
+                    </Surface>
+                  ))
+                ) : (
+                  <Text style={[styles.emptyHint, { color: colors.textSoft }]}>
+                    You can submit with files, note only, or status only.
+                  </Text>
+                )}
+
+                <TextField
+                  label="Note"
+                  multiline
+                  placeholder="Write a note for this update"
+                  style={styles.noteInput}
+                  value={note}
+                  onChangeText={setNote}
+                />
+              </>
+            )}
           </ScrollView>
 
           <View style={styles.footer}>
-            <Button label="Cancel" tone="ghost" onPress={onClose} />
-            <Button
-              disabled={!canSubmit || submitting || !targetStatus}
-              label={
-                submitting
-                  ? "Saving..."
-                  : targetStatus
-                    ? formatOrderStatusLabel(targetStatus)
-                    : "Done"
-              }
-              loading={submitting}
-              onPress={() => void handleSubmit()}
-            />
+            <Button label="Close" tone="ghost" onPress={onClose} style={styles.footerButton} />
+            {!isCompletedFlow ? (
+              <Button
+                disabled={!canSubmit || !targetStatus}
+                label={
+                  submitting
+                    ? "Saving..."
+                    : currentStatus === "PROCESSING" && isRejectDecision
+                      ? "Reject to Pending"
+                      : targetStatus
+                        ? formatOrderStatusLabel(targetStatus)
+                        : "Save"
+                }
+                loading={submitting}
+                onPress={() => void handleSubmit()}
+                style={styles.footerButton}
+              />
+            ) : null}
           </View>
-        </LinearGradient>
+        </Surface>
       </View>
     </Modal>
   );
@@ -885,213 +494,114 @@ export function StatusActionModal({
 
 const styles = StyleSheet.create({
   overlay: {
-    backgroundColor: "rgba(2, 8, 23, 0.56)",
+    backgroundColor: "rgba(2, 8, 23, 0.6)",
     flex: 1,
     justifyContent: "center",
     padding: 16,
   },
   sheet: {
-    borderRadius: 8,
-    maxHeight: "92%",
-    overflow: "hidden",
-    padding: 14,
+    gap: 16,
+    maxHeight: "90%",
   },
   header: {
-    alignItems: "center",
+    alignItems: "flex-start",
     flexDirection: "row",
     gap: 12,
     justifyContent: "space-between",
   },
   headerCopy: {
     flex: 1,
-    gap: 3,
+    gap: 4,
+    minWidth: 0,
   },
   title: {
-    color: "#f8fbff",
-    fontSize: 20,
-    fontWeight: "800",
+    fontSize: 28,
+    fontWeight: "900",
+    letterSpacing: -0.8,
   },
   subtitle: {
-    fontSize: 12,
-    fontWeight: "600",
+    fontSize: 13,
+    lineHeight: 19,
   },
   content: {
-    gap: 12,
-    paddingBottom: 10,
-    paddingTop: 14,
+    gap: 14,
   },
-  infoBand: {
-    borderRadius: 8,
-    gap: 3,
-    padding: 12,
-  },
-  infoLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-  },
-  infoValue: {
-    fontSize: 16,
-    fontWeight: "800",
-  },
-  infoHint: {
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  rowBlock: {
-    borderRadius: 8,
-    gap: 10,
-    padding: 12,
-  },
-  modeRow: {
-    alignItems: "center",
-    borderRadius: 8,
+  infoRow: {
     flexDirection: "row",
-    gap: 12,
-    justifyContent: "space-between",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  modeCopy: {
-    flex: 1,
-    gap: 2,
-  },
-  modeLabel: {
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  modeHint: {
-    fontSize: 11,
-    fontWeight: "500",
-    lineHeight: 16,
-  },
-  rowHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  rowTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  actionRow: {
-    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
   },
-  switch: {
-    borderRadius: 999,
-    height: 30,
-    justifyContent: "center",
-    width: 52,
-  },
-  switchThumb: {
-    backgroundColor: "#f8fbff",
-    borderRadius: 999,
-    height: 22,
-    position: "absolute",
-    top: 4,
-    width: 22,
-  },
-  switchThumbOn: {
-    right: 4,
-  },
-  switchThumbOff: {
-    left: 4,
-  },
-  files: {
-    gap: 8,
-  },
-  fileItem: {
-    alignItems: "center",
-    borderRadius: 8,
-    flexDirection: "row",
-    gap: 10,
-    padding: 10,
-  },
-  fileCopy: {
-    flex: 1,
-    gap: 4,
-    minWidth: 0,
-  },
-  fileTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  fileMeta: {
-    fontSize: 11,
-    fontWeight: "500",
-  },
-  fileActions: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  emptyFiles: {
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  fileNameRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 4,
-  },
-  fileInput: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: "700",
-    minWidth: 0,
-    paddingVertical: 0,
-  },
-  fileExtension: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  historyBlock: {
-    gap: 10,
-  },
-  historyGroup: {
-    borderTopWidth: 1,
-    gap: 10,
-    paddingTop: 10,
-  },
-  historyGroupTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  historyLane: {
+  rejectedNotice: {
     gap: 6,
   },
-  historyLaneLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
+  rejectedTitle: {
+    fontSize: 14,
+    fontWeight: "900",
   },
-  historyTitle: {
+  rejectedCopy: {
     fontSize: 13,
-    fontWeight: "700",
+    lineHeight: 20,
   },
-  historyItemRow: {
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  rowBetween: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 10,
+    gap: 12,
     justifyContent: "space-between",
   },
-  historyCopy: {
+  fileCard: {
+    gap: 0,
+  },
+  documentCard: {
+    gap: 0,
+  },
+  documentHeader: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "space-between",
+  },
+  documentCopy: {
     flex: 1,
-    gap: 2,
+    gap: 4,
     minWidth: 0,
   },
-  historyItemTitle: {
-    fontSize: 12,
-    fontWeight: "600",
+  documentName: {
+    fontSize: 14,
+    fontWeight: "800",
   },
-  historyItem: {
+  documentMeta: {
     fontSize: 12,
     lineHeight: 18,
+  },
+  documentNote: {
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 4,
+  },
+  documentNoteStrong: {
+    fontWeight: "800",
+  },
+  documentActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  emptyHint: {
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  noteInput: {
+    minHeight: 110,
+    textAlignVertical: "top",
   },
   footer: {
     flexDirection: "row",
     gap: 10,
-    justifyContent: "flex-end",
-    paddingTop: 10,
+  },
+  footerButton: {
+    flex: 1,
   },
 });

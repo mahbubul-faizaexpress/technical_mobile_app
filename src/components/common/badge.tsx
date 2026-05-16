@@ -37,7 +37,7 @@ export function Badge(props: {
       style={[
         styles.badge,
         compact ? styles.badgeCompact : null,
-        { backgroundColor: palette.backgroundColor },
+        { backgroundColor: palette.backgroundColor, borderColor: palette.backgroundColor },
       ]}
     >
       <Text
@@ -56,9 +56,10 @@ export function Badge(props: {
 const styles = StyleSheet.create({
   badge: {
     alignSelf: "flex-start",
+    borderWidth: 1,
     borderRadius: 999,
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 6,
   },
   badgeCompact: {
     paddingHorizontal: 8,

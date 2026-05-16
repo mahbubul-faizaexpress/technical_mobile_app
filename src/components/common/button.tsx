@@ -21,22 +21,22 @@ export function Button({
   const palette = {
     primary: {
       backgroundColor: colors.accent,
-      borderColor: "transparent",
+      borderColor: colors.accent,
       color: "#042321",
     },
     secondary: {
       backgroundColor: colors.cardMuted,
-      borderColor: "transparent",
+      borderColor: colors.border,
       color: colors.text,
     },
     ghost: {
-      backgroundColor: "transparent",
-      borderColor: "transparent",
+      backgroundColor: colors.cardMuted,
+      borderColor: colors.border,
       color: colors.text,
     },
     danger: {
       backgroundColor: colors.danger,
-      borderColor: "transparent",
+      borderColor: colors.danger,
       color: "#ffffff",
     },
   }[tone];
@@ -67,14 +67,15 @@ export function Button({
 const styles = StyleSheet.create({
   button: {
     alignItems: "center",
-    borderRadius: 8,
+    borderRadius: 18,
     borderWidth: 1,
     justifyContent: "center",
-    minHeight: 46,
-    paddingHorizontal: 16,
+    minHeight: 52,
+    paddingHorizontal: 18,
   },
   label: {
     fontSize: 14,
-    fontWeight: "700",
+    fontWeight: "800",
+    letterSpacing: 0.2,
   },
 });

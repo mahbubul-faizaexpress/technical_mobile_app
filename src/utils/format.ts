@@ -133,7 +133,7 @@ export function normalizeText(value: string) {
 }
 
 export function normalizePhone(value: string) {
-  return value.trim().replace(/[\s()-]/g, "");
+  return normalizeText(value);
 }
 
 export function buildTemporaryPassword() {

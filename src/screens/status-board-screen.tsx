@@ -1,32 +1,20 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useMemo, useState } from "react";
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { STATUS_BOARD_ORDERS_QUERY } from "@/api/documents";
 import type { OrderStatus, StatusBoardOrder } from "@/api/types";
 import { Badge } from "@/components/common/badge";
 import { EmptyState } from "@/components/common/empty-state";
-import { IconButton } from "@/components/common/icon-button";
 import { LoadingState } from "@/components/common/loading-state";
 import { PickerField } from "@/components/common/picker-field";
 import { Screen } from "@/components/common/screen";
 import { SearchField } from "@/components/common/search-field";
+import { SegmentedControl } from "@/components/common/segmented-control";
 import { Surface } from "@/components/common/surface";
 import { StatusActionModal } from "@/components/status-board/status-action-modal";
 import { useAuth } from "@/providers/auth-provider";
 import { useAppTheme } from "@/theme/theme-provider";
 import { formatDateTime, formatOrderStatusLabel } from "@/utils/format";
-import {
-  buildOrderSummary,
-  collectOrderCategoryTags,
-  getStatusTone,
-} from "@/utils/orders";
+import { getStatusTone } from "@/utils/orders";
 import { useAsyncResource } from "@/utils/use-async-resource";
 
 const statusOptions = [
@@ -42,16 +30,16 @@ const pageSizeOptions = [
 ] as const;
 
 type StatusBoardResponse = {
-  statusBoardOrders: {
+  technicalStatusBoardCategories: Array<{
+    serviceCategoryId: number;
+    name: string;
+  }>;
+  technicalStatusBoardOrders: {
     items: StatusBoardOrder[];
     hasNextPage: boolean;
     hasPreviousPage: boolean;
     totalPages: number;
     totalCount: number;
-    statusCounts: Array<{
-      status: OrderStatus;
-      count: number;
-    }>;
     categoryCounts: Array<{
       serviceCategoryId: number;
       name: string;
@@ -61,9 +49,9 @@ type StatusBoardResponse = {
 };
 
 export function StatusBoardScreen() {
-  const { colors, isDark } = useAppTheme();
-  const { width } = useWindowDimensions();
+  const { colors } = useAppTheme();
   const { executeAuthenticated } = useAuth();
+  const { width } = useWindowDimensions();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState("");
@@ -88,7 +76,7 @@ export function StatusBoardScreen() {
     [executeAuthenticated, page, pageSize, serviceCategoryId, status],
   );
 
-  const pageData = resource.data?.statusBoardOrders;
+  const pageData = resource.data?.technicalStatusBoardOrders;
   const visibleOrders = useMemo(() => {
     if (!pageData) {
       return [];
@@ -100,46 +88,43 @@ export function StatusBoardScreen() {
       return pageData.items;
     }
 
-    return pageData.items.filter((order) => {
-      const summary = buildOrderSummary(order);
-      const categories = collectOrderCategoryTags(order).join(" ");
-      const searchTarget = [
+    return pageData.items.filter((order) =>
+      [
         order.companyInfo?.name,
-        summary.packageLabel,
-        summary.serviceLabel,
-        categories,
-        `order ${order.id}`,
+        order.serviceName,
+        order.packageName,
+        order.serviceCategoryName,
+        `order ${order.orderId}`,
       ]
         .filter(Boolean)
         .join(" ")
-        .toLowerCase();
-
-      return searchTarget.includes(normalizedSearch);
-    });
+        .toLowerCase()
+        .includes(normalizedSearch),
+    );
   }, [pageData, search]);
 
   return (
-    <Screen
-      contentStyle={styles.screenContent}
-      onRefresh={() => {
-        void resource.reload("refresh");
-      }}
-      refreshing={resource.refreshing}
-    >
+    <Screen onRefresh={() => void resource.reload("refresh")} refreshing={resource.refreshing}>
       <View style={styles.stack}>
-        <PickerField
-          selectedValue={status}
-          options={statusOptions.map((option) => ({
-            label: option.label,
-            value: option.value,
-          }))}
-          onValueChange={(value) => {
+        <View style={styles.hero}>
+          <Text style={[styles.heroEyebrow, { color: colors.accent }]}>Workflow</Text>
+          <Text style={[styles.heroTitle, { color: colors.text }]}>Status board</Text>
+          <Text style={[styles.heroCopy, { color: colors.textSoft }]}>
+            Service-wise pending, processing, and completed workflow across all technical orders.
+          </Text>
+        </View>
+
+        <SegmentedControl
+          options={statusOptions}
+          value={status}
+          onChange={(value) => {
             setStatus(value as OrderStatus);
             setPage(1);
           }}
         />
+
         <SearchField
-          placeholder="Search company, package, or service"
+          placeholder="Search order, company, service, package"
           returnKeyType="search"
           value={search}
           onChangeText={setSearch}
@@ -156,7 +141,7 @@ export function StatusBoardScreen() {
                 style={[
                   styles.categoryChip,
                   {
-                    backgroundColor: serviceCategoryId === null ? colors.accent : colors.card,
+                    backgroundColor: serviceCategoryId === null ? colors.accent : colors.cardMuted,
                     borderColor: serviceCategoryId === null ? colors.accent : colors.border,
                   },
                 ]}
@@ -172,6 +157,7 @@ export function StatusBoardScreen() {
                   All Categories
                 </Text>
               </Pressable>
+
               {pageData.categoryCounts.map((item) => (
                 <Pressable
                   key={`${item.serviceCategoryId}-${item.name}`}
@@ -183,13 +169,9 @@ export function StatusBoardScreen() {
                     styles.categoryChip,
                     {
                       backgroundColor:
-                        serviceCategoryId === item.serviceCategoryId
-                          ? colors.accent
-                          : colors.card,
+                        serviceCategoryId === item.serviceCategoryId ? colors.accent : colors.cardMuted,
                       borderColor:
-                        serviceCategoryId === item.serviceCategoryId
-                          ? colors.accent
-                          : colors.border,
+                        serviceCategoryId === item.serviceCategoryId ? colors.accent : colors.border,
                     },
                   ]}
                 >
@@ -198,9 +180,7 @@ export function StatusBoardScreen() {
                       styles.categoryLabel,
                       {
                         color:
-                          serviceCategoryId === item.serviceCategoryId
-                            ? "#042321"
-                            : colors.text,
+                          serviceCategoryId === item.serviceCategoryId ? "#042321" : colors.text,
                       },
                     ]}
                   >
@@ -220,121 +200,129 @@ export function StatusBoardScreen() {
         {pageData ? (
           <View style={styles.stack}>
             <Text style={[styles.summary, { color: colors.textSoft }]}>
-              {pageData.totalCount} orders in {formatOrderStatusLabel(status)}
+              {pageData.totalCount} service items in {formatOrderStatusLabel(status)}
             </Text>
+
             {visibleOrders.length === 0 ? (
               <EmptyState
-                title="No matching orders"
+                title="No matching services"
                 description="Try another category or clear your search."
               />
             ) : (
               visibleOrders.map((order) => {
-                const summary = buildOrderSummary(order);
-                const categories = collectOrderCategoryTags(order);
-                const canUpdateStatus = order.status === "PENDING" || order.status === "PROCESSING";
+                const isRejectedPending = status === "PENDING" && Boolean(order.lastRejectedAt);
 
                 return (
-                  <Surface
+                  <Pressable
                     key={order.id}
-                    style={[
-                      styles.card,
-                      {
-                        backgroundColor: isDark ? "#091a31" : colors.card,
-                        shadowColor: isDark ? "rgba(1, 6, 18, 0.52)" : colors.shadow,
-                      },
-                    ]}
+                    onPress={() => setActiveOrder(order)}
                   >
-                    <Pressable
-                      disabled={!canUpdateStatus}
-                      onPress={() => {
-                        if (canUpdateStatus) {
-                          setActiveOrder(order);
-                        }
-                      }}
-                      style={({ pressed }) => [
-                        styles.summaryPressable,
-                        pressed && canUpdateStatus ? styles.summaryPressableActive : null,
+                    <Surface
+                      style={[
+                        styles.card,
+                        isRejectedPending
+                          ? {
+                              backgroundColor: "rgba(255, 95, 95, 0.08)",
+                              borderColor: "rgba(255, 95, 95, 0.2)",
+                            }
+                          : null,
                       ]}
                     >
-                      <View style={styles.copy}>
-                        <Text style={[styles.orderNumber, { color: colors.text }]}>
-                          {`Order-#${order.orderId}`}
-                        </Text>
-                        <Text style={[styles.companyName, { color: colors.textDim }]}>
-                          {order.companyInfo?.name ?? "Unknown company"}
-                        </Text>
-                      </View>
-
-                      <Text style={[styles.packageLabel, { color: colors.text }]}>
-                        {summary.packageLabel}
-                      </Text>
-                      <Text style={[styles.subtle, { color: colors.textDim }]}>
-                        {summary.serviceLabel}
-                      </Text>
-
-                      {categories.length > 0 ? (
-                        <View style={styles.tagRow}>
-                          {categories.map((category) => (
-                            <Badge key={category} label={category} tone="neutral" />
-                          ))}
+                      <View style={styles.cardTop}>
+                        <View style={styles.copy}>
+                          <Text style={[styles.serviceName, { color: colors.text }]}>
+                            {order.serviceName || "Unnamed service"}
+                          </Text>
+                          <Text style={[styles.companyName, { color: colors.textDim }]}>
+                            {order.companyInfo?.name ?? "Unknown company"}
+                          </Text>
                         </View>
-                      ) : null}
-
-                      <View style={styles.rowBetween}>
-                        <Text style={[styles.subtle, styles.dateMeta, { color: colors.textSoft }]}>
-                          {formatDateTime(order.updatedAt)}
-                        </Text>
                         <Badge
                           label={formatOrderStatusLabel(order.status)}
-                          size="compact"
                           tone={getStatusTone(order.status)}
                         />
                       </View>
 
-                    </Pressable>
-                  </Surface>
+                      <View style={styles.metaBlock}>
+                        <Text style={[styles.meta, { color: colors.textSoft }]}>
+                          Order #{order.orderId}
+                        </Text>
+                        {order.packageName?.trim() ? (
+                          <Text style={[styles.meta, { color: colors.textSoft }]}>
+                            Package · {order.packageName}
+                          </Text>
+                        ) : null}
+                        <Text style={[styles.meta, { color: colors.textSoft }]}>
+                          Category · {order.serviceCategoryName}
+                        </Text>
+                        <Text style={[styles.meta, { color: colors.textSoft }]}>
+                          Updated {formatDateTime(order.updatedAt)}
+                        </Text>
+                      </View>
+
+                      {isRejectedPending && order.lastRejectedAt ? (
+                        <Text style={[styles.rejectedText, { color: colors.danger }]}>
+                          Rejected on {formatDateTime(order.lastRejectedAt)}
+                        </Text>
+                      ) : null}
+                    </Surface>
+                  </Pressable>
                 );
               })
             )}
+
             <View style={[styles.paginationFooter, compact && styles.paginationFooterCompact]}>
-              <View style={styles.pageSizeWrap}>
-                <PickerField
-                  containerStyle={styles.pageSizePicker}
-                  size="compact"
-                  selectedValue={String(pageSize)}
-                  options={pageSizeOptions.map((option) => ({
-                    label: option.label,
-                    value: option.value,
-                  }))}
-                  onValueChange={(value) => {
-                    setPageSize(Number(value));
-                    setPage(1);
-                  }}
-                />
-              </View>
-              <View style={[styles.pagination, compact && styles.paginationCompact]}>
-                <IconButton
+              <PickerField
+                containerStyle={styles.pageSizePicker}
+                size="compact"
+                selectedValue={String(pageSize)}
+                options={pageSizeOptions.map((option) => ({
+                  label: option.label,
+                  value: option.value,
+                }))}
+                onValueChange={(value) => {
+                  setPageSize(Number(value));
+                  setPage(1);
+                }}
+              />
+              <View style={styles.pagination}>
+                <Pressable
                   disabled={!pageData.hasPreviousPage}
                   onPress={() => setPage((current) => Math.max(1, current - 1))}
-                  style={styles.paginationButton}
+                  style={({ pressed }) => [
+                    styles.pageButton,
+                    {
+                      backgroundColor: colors.cardMuted,
+                      borderColor: colors.border,
+                      opacity: !pageData.hasPreviousPage ? 0.45 : pressed ? 0.82 : 1,
+                    },
+                  ]}
                 >
-                  <Ionicons color={colors.text} name="chevron-back" size={18} />
-                </IconButton>
-                <Text style={[styles.page, compact && styles.pageCompact, { color: colors.text }]}>
+                  <Text style={[styles.pageButtonLabel, { color: colors.text }]}>Prev</Text>
+                </Pressable>
+                <Text style={[styles.page, { color: colors.text }]}>
                   {pageData.totalPages === 0 ? 0 : page} / {pageData.totalPages}
                 </Text>
-                <IconButton
+                <Pressable
                   disabled={!pageData.hasNextPage}
                   onPress={() => setPage((current) => current + 1)}
-                  style={styles.paginationButton}
+                  style={({ pressed }) => [
+                    styles.pageButton,
+                    {
+                      backgroundColor: colors.cardMuted,
+                      borderColor: colors.border,
+                      opacity: !pageData.hasNextPage ? 0.45 : pressed ? 0.82 : 1,
+                    },
+                  ]}
                 >
-                  <Ionicons color={colors.text} name="chevron-forward" size={18} />
-                </IconButton>
+                  <Text style={[styles.pageButtonLabel, { color: colors.text }]}>Next</Text>
+                </Pressable>
               </View>
             </View>
           </View>
         ) : null}
       </View>
+
       {activeOrder ? (
         <StatusActionModal
           currentStatus={status}
@@ -350,94 +338,80 @@ export function StatusBoardScreen() {
 }
 
 const styles = StyleSheet.create({
-  screenContent: {
-    paddingTop: 0,
-  },
   stack: {
-    gap: 14,
-    marginTop: 0,
+    gap: 16,
   },
-  summary: {
-    fontSize: 13,
-    fontWeight: "600",
+  hero: {
+    gap: 8,
+    paddingTop: 4,
+  },
+  heroEyebrow: {
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+  },
+  heroTitle: {
+    fontSize: 30,
+    fontWeight: "900",
+    letterSpacing: -1,
+  },
+  heroCopy: {
+    fontSize: 14,
+    lineHeight: 22,
   },
   categoryRow: {
     flexDirection: "row",
     gap: 8,
   },
   categoryChip: {
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     justifyContent: "center",
-    minHeight: 40,
+    minHeight: 42,
     paddingHorizontal: 14,
   },
   categoryLabel: {
     fontSize: 13,
+    fontWeight: "800",
+  },
+  summary: {
+    fontSize: 13,
     fontWeight: "700",
   },
   card: {
-    gap: 10,
-  },
-  summaryPressable: {
-    gap: 10,
-  },
-  summaryPressableActive: {
-    opacity: 0.82,
-  },
-  rowBetween: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
     gap: 12,
   },
-  rowStack: {
+  cardTop: {
     alignItems: "flex-start",
-    flexDirection: "column",
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "space-between",
   },
   copy: {
     flex: 1,
-    gap: 2,
+    gap: 4,
     minWidth: 0,
   },
-  orderNumber: {
-    fontSize: 16,
-    fontWeight: "800",
+  serviceName: {
+    fontSize: 19,
+    fontWeight: "900",
+    letterSpacing: -0.4,
   },
   companyName: {
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  statusWrap: {
-    alignItems: "flex-end",
-    gap: 6,
-  },
-  actionHint: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  packageLabel: {
     fontSize: 14,
     fontWeight: "700",
   },
-  subtle: {
+  metaBlock: {
+    gap: 4,
+  },
+  meta: {
     fontSize: 12,
-    lineHeight: 17,
+    lineHeight: 18,
   },
-  dateMeta: {
-    flex: 1,
-  },
-  tagRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  pagination: {
-    alignItems: "center",
-    flexDirection: "row",
-    flex: 1,
-    gap: 8,
-    justifyContent: "flex-end",
+  rejectedText: {
+    fontSize: 13,
+    fontWeight: "800",
   },
   paginationFooter: {
     alignItems: "center",
@@ -446,31 +420,34 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   paginationFooterCompact: {
-    gap: 8,
-  },
-  paginationCompact: {
-    justifyContent: "flex-end",
-  },
-  paginationButton: {
-    minHeight: 38,
-    minWidth: 74,
-    paddingHorizontal: 12,
-  },
-  pageSizeWrap: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 0,
+    alignItems: "stretch",
+    flexDirection: "column",
   },
   pageSizePicker: {
-    width: 74,
+    width: 84,
+  },
+  pagination: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+  },
+  pageButton: {
+    alignItems: "center",
+    borderRadius: 16,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 40,
+    minWidth: 78,
+    paddingHorizontal: 14,
+  },
+  pageButtonLabel: {
+    fontSize: 13,
+    fontWeight: "800",
   },
   page: {
     fontSize: 13,
-    fontWeight: "700",
-    minWidth: 54,
+    fontWeight: "800",
+    minWidth: 66,
     textAlign: "center",
-  },
-  pageCompact: {
-    minWidth: 50,
   },
 });

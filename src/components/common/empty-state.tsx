@@ -13,7 +13,7 @@ export function EmptyState(props: {
         styles.container,
         {
           backgroundColor: colors.card,
-          borderColor: "transparent",
+          borderColor: colors.border,
         },
       ]}
     >
@@ -28,11 +28,11 @@ export function EmptyState(props: {
 const styles = StyleSheet.create({
   container: {
     alignItems: "center",
-    borderRadius: 8,
+    borderRadius: 22,
     borderWidth: 1,
     gap: 8,
     paddingHorizontal: 18,
-    paddingVertical: 20,
+    paddingVertical: 22,
   },
   title: {
     fontSize: 16,

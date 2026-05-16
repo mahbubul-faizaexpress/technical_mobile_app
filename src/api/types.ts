@@ -50,6 +50,9 @@ export type OverviewStats = {
   pendingOrders: number;
   processingOrders: number;
   completedOrders: number;
+  totalPayments: string;
+  totalPartialPayment: string;
+  totalDue: string;
 };
 
 export type CompanyProfileDetails = {
@@ -148,11 +151,8 @@ export type OrdersPageItem = {
 export type StatusBoardDocument = {
   id: number;
   description: string;
-  attachment: string;
+  attachment?: string | null;
   documentType: ServiceDocumentType;
-  serviceId?: number | null;
-  serviceCategoryId?: number | null;
-  isStatusOnly?: boolean | null;
   createdAt: string;
   uploadedBy: string;
   uploadedByUser?: {
@@ -177,9 +177,18 @@ export type StatusBoardOrder = {
   id: string;
   orderId: number;
   status: OrderStatus;
+  serviceId?: number | null;
+  serviceName?: string | null;
+  packageName?: string | null;
   serviceCategoryId: number;
   serviceCategoryName: string;
   matchedServiceNames: string[];
+  retryAvailableAt?: string | null;
+  lastRejectedAt?: string | null;
+  lastRejectedDays?: number | null;
+  rejectionCount?: number | null;
+  allowsRejection?: boolean | null;
+  isRetryBlocked?: boolean | null;
   availableServiceCategories: Array<{
     serviceCategoryId: number;
     name: string;
@@ -194,13 +203,6 @@ export type StatusBoardOrder = {
     service?: {
       id: number;
       name: string;
-      serviceCategoryMappings?: Array<{
-        serviceCategoryId: number;
-        serviceCategory?: {
-          id: number;
-          name: string;
-        } | null;
-      } | null> | null;
     } | null;
   } | null> | null;
   orderPackages?: Array<{
@@ -211,18 +213,13 @@ export type StatusBoardOrder = {
         service?: {
           id: number;
           name: string;
-          serviceCategoryMappings?: Array<{
-            serviceCategoryId: number;
-            serviceCategory?: {
-              id: number;
-              name: string;
-            } | null;
-          } | null> | null;
         } | null;
       } | null> | null;
     } | null;
   } | null> | null;
 };
+
+export type CompanyAccountPaymentStatus = "DUE" | "PAID" | "PARTIALLY_PAID";
 
 export type CompanyAccount = {
   id: number;
@@ -255,7 +252,9 @@ export type CompanyAccount = {
     paidAmount: string;
     dueAmount: string;
     currency: string;
-    status: string;
+    canCollectDue: boolean;
+    collectDueOrderId?: number | null;
+    status: CompanyAccountPaymentStatus;
     latestPaymentMethod?: PaymentMethod | null;
     latestTransactionStatus?: PaymentStatus | null;
     latestActivityAt: string;
@@ -293,6 +292,31 @@ export type AddOrderFormData = {
     companyTypeId: number;
     serviceTypeId: number;
     userId: string;
+    countryProfiles?: Array<{
+      id: number;
+      countryId: number;
+      stateId: number;
+      companyTypeId: number;
+      serviceTypeId: number;
+      state: {
+        id: number;
+        name: string;
+        countryId: number;
+        country: {
+          id: number;
+          name: string;
+        };
+      };
+      companyType: {
+        id: number;
+        name: string;
+        memberType?: "SINGLE" | "MULTIPLE" | null;
+      };
+      serviceType: {
+        id: number;
+        name: string;
+      };
+    } | null> | null;
     state?: {
       id: number;
       name: string;
@@ -305,6 +329,7 @@ export type AddOrderFormData = {
     companyType?: {
       id: number;
       name: string;
+      memberType?: "SINGLE" | "MULTIPLE" | null;
     } | null;
     serviceType?: {
       id: number;
@@ -318,10 +343,19 @@ export type AddOrderFormData = {
       phone: string;
       address?: string | null;
     } | null;
+    users?: Array<{
+      id: string;
+      firstName: string;
+      lastName: string;
+      email: string;
+      phone: string;
+      address?: string | null;
+    } | null> | null;
   }>;
   companyTypes: Array<{
     id: number;
     name: string;
+    memberType?: "SINGLE" | "MULTIPLE" | null;
     isActive: boolean;
   }>;
   companyServiceTypes: Array<{
@@ -360,9 +394,23 @@ export type AddOrderFormData = {
     name: string;
     countryId: number;
     currentPrice?: string | null;
+    prevPrice?: string | null;
+    deliveryDaysMin?: number | null;
+    deliveryDaysMax?: number | null;
+    requiresStateFee?: boolean | null;
     isActive: boolean;
     isAddOn: boolean;
   }>;
+};
+
+export type TechnicalOrderRestrictions = {
+  companyId: number;
+  countryId: number;
+  stateId?: number | null;
+  scopeType: "STATE" | "COUNTRY";
+  hasPackageOrderInScope: boolean;
+  blockedPackageIds: number[];
+  blockedServiceIds: number[];
 };
 
 export type CloudinarySignaturePayload = {

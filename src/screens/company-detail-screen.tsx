@@ -1,7 +1,5 @@
-import * as DocumentPicker from "expo-document-picker";
-import type { DocumentPickerAsset } from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Alert,
   Modal,
@@ -15,11 +13,13 @@ import {
 import {
   COMPANY_ACCOUNTS_QUERY,
   COMPANY_PROFILE_DETAILS_QUERY,
+  CREATE_TECHNICAL_PAYMENT_MUTATION,
 } from "@/api/documents";
-import { uploadDocumentToCloudinary } from "@/api/cloudinary";
 import type {
   CompanyAccount,
   CompanyProfileDetails,
+  PaymentMethod,
+  PaymentStatus,
 } from "@/api/types";
 import type { RootStackScreenProps } from "@/navigation/types";
 import { Badge } from "@/components/common/badge";
@@ -34,18 +34,16 @@ import { TextField } from "@/components/common/text-field";
 import { useAppConfig } from "@/providers/app-config-provider";
 import { useAuth } from "@/providers/auth-provider";
 import { useAppTheme } from "@/theme/theme-provider";
+import { downloadDocument, openDocumentPreview, resolveDocumentFileName } from "@/utils/documents";
 import {
-  downloadDocument,
-  openDocumentPreview,
-  resolveDocumentFileName,
-} from "@/utils/documents";
-import {
+  buildManualTransactionId,
   formatCurrency,
   formatDateTime,
   formatDocumentTypeLabel,
   formatEnumLabel,
   formatPaymentMethod,
   formatPaymentStatus,
+  normalizeText,
   parseMoney,
 } from "@/utils/format";
 import { getStatusTone } from "@/utils/orders";
@@ -53,7 +51,7 @@ import { useAsyncResource } from "@/utils/use-async-resource";
 
 const tabOptions = [
   { label: "Services", value: "services" },
-  { label: "Payments", value: "payments" },
+  { label: "Payment", value: "payments" },
   { label: "Documents", value: "documents" },
   { label: "Profile", value: "profile" },
 ] as const;
@@ -77,87 +75,20 @@ type CompanyDetailResource = {
   items: CompanyAccount[];
   profile: CompanyProfileDetails | null;
 };
-type ProfileDocumentItem = {
-  id: string;
-  attachmentUrl: string;
-  fileName: string;
-  mimeType?: string | null;
-  name: string;
-  sizeLabel: string;
-};
-type PendingProfileDocument = {
-  asset: DocumentPickerAsset;
-  id: string;
-  sizeLabel: string;
-  title: string;
-};
-
-function createLocalId() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function getFileExtension(value?: string | null) {
-  if (!value) {
-    return "";
-  }
-
-  const lastDot = value.lastIndexOf(".");
-
-  if (lastDot < 0 || lastDot === value.length - 1) {
-    return "";
-  }
-
-  return value.slice(lastDot + 1);
-}
-
-function stripFileExtension(value?: string | null) {
-  if (!value) {
-    return "";
-  }
-
-  const lastDot = value.lastIndexOf(".");
-
-  if (lastDot <= 0) {
-    return value;
-  }
-
-  return value.slice(0, lastDot);
-}
-
-function buildProfileDocumentName(title: string, originalFileName: string) {
-  const normalizedTitle = title.trim() || stripFileExtension(originalFileName) || "document";
-  const extension = getFileExtension(originalFileName);
-
-  return extension ? `${normalizedTitle}.${extension}` : normalizedTitle;
-}
-
-function formatFileSize(value?: number | null) {
-  if (!value || value <= 0) {
-    return "0 KB";
-  }
-
-  if (value < 1024 * 1024) {
-    return `${Math.max(1, Math.round(value / 1024))} KB`;
-  }
-
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 export function CompanyDetailScreen({ route }: RootStackScreenProps<"CompanyDetail">) {
   const { colors } = useAppTheme();
-  const { width } = useWindowDimensions();
-  const { config } = useAppConfig();
   const { executeAuthenticated } = useAuth();
+  const { config } = useAppConfig();
+  const { width } = useWindowDimensions();
   const [tab, setTab] = useState<DetailTab>("services");
   const [documentTab, setDocumentTab] = useState<DocumentTab>("SUBMITTED");
-  const [profileDocuments, setProfileDocuments] = useState<ProfileDocumentItem[]>([]);
-  const [pendingProfileDocuments, setPendingProfileDocuments] = useState<PendingProfileDocument[]>(
-    [],
-  );
-  const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [profileDocumentsUploading, setProfileDocumentsUploading] = useState(false);
-  const compact = width < 390;
-  const summaryCardWidth = width >= 720 ? "31.8%" : "48.5%";
+  const [collectingPaymentId, setCollectingPaymentId] = useState<string | null>(null);
+  const [collectAmount, setCollectAmount] = useState("");
+  const [collectNote, setCollectNote] = useState("");
+  const [submittingPayment, setSubmittingPayment] = useState(false);
+  const isWide = width >= 780;
+  const summaryCardWidth = isWide ? "31.6%" : "48.2%";
 
   const resource = useAsyncResource<CompanyDetailResource>(
     async () => {
@@ -199,71 +130,60 @@ export function CompanyDetailScreen({ route }: RootStackScreenProps<"CompanyDeta
     [resource.data?.items, route.params.companyId],
   );
   const companyProfile = resource.data?.profile ?? null;
-  const visibleDocuments = useMemo(
-    () =>
-      company?.documents.filter((document) => document.documentType === documentTab) ?? [],
-    [company?.documents, documentTab],
-  );
-  const paymentSummary = useMemo(() => {
-    const currency = company?.payments.find((payment) => payment.currency)?.currency ?? "USD";
-    const totalPayment = (company?.payments ?? []).reduce(
+
+  const summaryCards = useMemo(() => {
+    if (!company) {
+      return [];
+    }
+
+    const packagesAmount = company.payments.reduce(
+      (sum, payment) => sum + parseMoney(payment.totalAmount),
+      0,
+    );
+    const paidAmount = company.payments.reduce(
       (sum, payment) => sum + parseMoney(payment.paidAmount),
       0,
     );
-    const totalDue = (company?.payments ?? []).reduce(
+    const dueAmount = company.payments.reduce(
       (sum, payment) => sum + parseMoney(payment.dueAmount),
       0,
     );
-    const partialPayments =
-      company?.payments.filter((payment) => payment.status === "PARTIALLY_PAID").length ?? 0;
+    const currency = company.payments.find((payment) => payment.currency)?.currency ?? "USD";
 
-    return {
-      partialPayments,
-      totalDueLabel: formatCurrency(totalDue, currency),
-      totalPaymentLabel: formatCurrency(totalPayment, currency),
-    };
-  }, [company?.payments]);
-  const summaryCards = useMemo(
-    () => [
-      { label: "Completed Orders", tone: "default" as const, value: company?.completedOrdersCount ?? 0 },
-      { label: "Pending Orders", tone: "default" as const, value: company?.pendingOrdersCount ?? 0 },
-      { label: "Total Payment", tone: "default" as const, value: paymentSummary.totalPaymentLabel },
+    return [
+      { label: "Completed Orders", value: String(company.completedOrdersCount) },
       {
-        label: "Total Partial Payment",
-        tone: "default" as const,
-        value: paymentSummary.partialPayments,
+        label: "Pending Orders",
+        value: String(company.pendingOrdersCount + company.processingOrdersCount),
       },
-      { label: "Total Due", tone: "danger" as const, value: paymentSummary.totalDueLabel },
-    ],
-    [
-      company?.completedOrdersCount,
-      company?.pendingOrdersCount,
-      paymentSummary.partialPayments,
-      paymentSummary.totalDueLabel,
-      paymentSummary.totalPaymentLabel,
-    ],
+      { label: "Packages Amount", value: formatCurrency(packagesAmount, currency) },
+      { label: "Paid Amount", value: formatCurrency(paidAmount, currency) },
+      { label: "Due", value: formatCurrency(dueAmount, currency), danger: dueAmount > 0 },
+    ];
+  }, [company]);
+
+  const visibleDocuments = useMemo(
+    () => company?.documents.filter((document) => document.documentType === documentTab) ?? [],
+    [company?.documents, documentTab],
   );
-  const userInformationRows = useMemo(
+
+  const activeCollectPayment = useMemo(
+    () => company?.payments.find((payment) => payment.id === collectingPaymentId) ?? null,
+    [collectingPaymentId, company?.payments],
+  );
+
+  const profileRows = useMemo(
     () => [
       {
-        label: "Full Name",
+        label: "Owner",
         value:
           `${companyProfile?.user?.firstName ?? ""} ${companyProfile?.user?.lastName ?? ""}`.trim() ||
           company?.ownerName ||
           "Not available",
       },
-      {
-        label: "Email",
-        value: companyProfile?.user?.email ?? company?.email ?? "Not available",
-      },
-      {
-        label: "Phone",
-        value: companyProfile?.user?.phone ?? company?.phone ?? "Not available",
-      },
-      {
-        label: "Address",
-        value: companyProfile?.user?.address ?? "Not available",
-      },
+      { label: "Email", value: companyProfile?.user?.email ?? company?.email ?? "Not available" },
+      { label: "Phone", value: companyProfile?.user?.phone ?? company?.phone ?? "Not available" },
+      { label: "Address", value: companyProfile?.user?.address ?? "Not available" },
       {
         label: "Role",
         value: companyProfile?.user?.role
@@ -276,15 +196,7 @@ export function CompanyDetailScreen({ route }: RootStackScreenProps<"CompanyDeta
           ? formatEnumLabel(companyProfile.user.status)
           : "Not available",
       },
-    ],
-    [company?.email, company?.ownerName, company?.phone, companyProfile],
-  );
-  const otherDetailsRows = useMemo(
-    () => [
-      {
-        label: "EIN",
-        value: companyProfile?.companyDetails?.ein ?? "Not available",
-      },
+      { label: "EIN", value: companyProfile?.companyDetails?.ein ?? "Not available" },
       {
         label: "Notification Email",
         value: companyProfile?.companyDetails?.notificationEmail ?? "Not available",
@@ -293,95 +205,76 @@ export function CompanyDetailScreen({ route }: RootStackScreenProps<"CompanyDeta
         label: "EIN Address",
         value: companyProfile?.companyDetails?.address ?? "Not available",
       },
-      {
-        label: "Created",
-        value: company ? formatDateTime(company.createdAt) : "Not available",
-      },
     ],
-    [company, companyProfile],
+    [company?.email, company?.ownerName, company?.phone, companyProfile],
   );
 
-  useEffect(() => {
-    setProfileDocuments([]);
-    setPendingProfileDocuments([]);
-    setProfileModalOpen(false);
-    setProfileDocumentsUploading(false);
-    setTab("services");
-    setDocumentTab("SUBMITTED");
-  }, [route.params.companyId]);
-
-  const handlePickProfileDocuments = async () => {
-    const result = await DocumentPicker.getDocumentAsync({
-      copyToCacheDirectory: true,
-      multiple: true,
-      type: ["application/pdf", "image/*"],
-    });
-
-    if (result.canceled || result.assets.length === 0) {
-      return;
-    }
-
-    setPendingProfileDocuments((current) => [
-      ...current,
-      ...result.assets.map((asset) => ({
-        asset,
-        id: createLocalId(),
-        sizeLabel: formatFileSize(asset.size),
-        title: stripFileExtension(asset.name) || "Document",
-      })),
-    ]);
+  const openCollectModal = (paymentId: string, dueAmount: string) => {
+    setCollectingPaymentId(paymentId);
+    setCollectAmount(String(parseMoney(dueAmount) || ""));
+    setCollectNote("");
   };
 
-  const handleUploadProfileDocuments = async () => {
-    if (pendingProfileDocuments.length === 0) {
-      setProfileModalOpen(false);
+  const handleCollectDue = async () => {
+    if (!activeCollectPayment?.canCollectDue || !activeCollectPayment.collectDueOrderId) {
+      Alert.alert("Unavailable", "This due payment cannot be collected from mobile right now.");
       return;
     }
 
-    setProfileDocumentsUploading(true);
+    const dueAmount = parseMoney(activeCollectPayment.dueAmount);
+    const amount = parseMoney(collectAmount);
+
+    if (amount <= 0) {
+      Alert.alert("Enter amount", "Enter a valid payment amount.");
+      return;
+    }
+
+    if (amount > dueAmount) {
+      Alert.alert("Amount too high", "Collected amount cannot be more than the current due.");
+      return;
+    }
 
     try {
-      const uploadedDocuments: ProfileDocumentItem[] = [];
+      setSubmittingPayment(true);
 
-      for (const item of pendingProfileDocuments) {
-        const uploadResult = await uploadDocumentToCloudinary({
-          asset: item.asset,
-          cloudinaryCloudName: config.cloudinaryCloudName,
-          cloudinaryUploadPreset: config.cloudinaryUploadPreset,
-          webAppUrl: config.webAppUrl,
-        });
-        const fileName = buildProfileDocumentName(item.title, uploadResult.originalFileName);
+      await executeAuthenticated<
+        { createTechnicalPayment: { id: number } },
+        {
+          input: {
+            amount: number;
+            currency: string;
+            note?: string;
+            orderId: number;
+            paymentMethod: PaymentMethod;
+            status: PaymentStatus;
+            transactionId: string;
+          };
+        }
+      >(CREATE_TECHNICAL_PAYMENT_MUTATION, {
+        input: {
+          amount,
+          currency: activeCollectPayment.currency,
+          ...(normalizeText(collectNote).length ? { note: normalizeText(collectNote) } : {}),
+          orderId: activeCollectPayment.collectDueOrderId,
+          paymentMethod: "MAIN_BALANCE",
+          status: amount >= dueAmount ? "PAID" : "PARTIALLY_PAID",
+          transactionId: buildManualTransactionId(activeCollectPayment.collectDueOrderId),
+        },
+      });
 
-        uploadedDocuments.push({
-          id: createLocalId(),
-          attachmentUrl: uploadResult.secureUrl,
-          fileName,
-          mimeType: item.asset.mimeType ?? null,
-          name: fileName,
-          sizeLabel: item.sizeLabel,
-        });
-      }
-
-      setProfileDocuments((current) => [...current, ...uploadedDocuments]);
-      setPendingProfileDocuments([]);
-      setProfileModalOpen(false);
+      setCollectingPaymentId(null);
+      setCollectAmount("");
+      setCollectNote("");
+      await resource.reload("refresh");
+      Alert.alert("Payment collected", "Due payment has been recorded successfully.");
     } catch (error) {
       Alert.alert(
-        "Upload failed",
-        error instanceof Error ? error.message : "Could not upload documents.",
+        "Collection failed",
+        error instanceof Error ? error.message : "Could not collect due payment.",
       );
     } finally {
-      setProfileDocumentsUploading(false);
+      setSubmittingPayment(false);
     }
-  };
-
-  const handlePreviewProfileDocument = (document: ProfileDocumentItem) => {
-    void openDocumentPreview(config, document.attachmentUrl, document.fileName).catch((error) => {
-      Alert.alert(
-        "Preview failed",
-        error instanceof Error ? error.message : "Could not open document.",
-      );
-    });
   };
 
   return (
@@ -394,433 +287,340 @@ export function CompanyDetailScreen({ route }: RootStackScreenProps<"CompanyDeta
       {company ? (
         <View style={styles.stack}>
           <Surface style={styles.hero}>
-            <Text style={[styles.companyName, { color: colors.text }]}>{company.companyName}</Text>
-            <Text style={[styles.owner, { color: colors.textDim }]}>{company.ownerName}</Text>
-
-            <View style={styles.contactStack}>
-              <Text style={[styles.copy, { color: colors.textSoft }]}>{company.country}</Text>
-              <Text style={[styles.copy, { color: colors.textSoft }]}>{company.email}</Text>
-              <Text style={[styles.copy, { color: colors.textSoft }]}>{company.phone}</Text>
+            <View style={styles.heroTop}>
+              <View style={styles.heroCopy}>
+                <Text style={[styles.companyName, { color: colors.text }]}>{company.companyName}</Text>
+                <Text style={[styles.owner, { color: colors.textDim }]}>{company.ownerName}</Text>
+              </View>
+              <Badge label={company.country} tone="accent" />
             </View>
 
+            <Text style={[styles.meta, { color: colors.textSoft }]}>{company.email}</Text>
+            <Text style={[styles.meta, { color: colors.textSoft }]}>{company.phone}</Text>
+
             <View style={styles.summaryGrid}>
-              {summaryCards.map((item) => (
-                <View
-                  key={item.label}
+              {summaryCards.map((card) => (
+                <Surface
+                  key={card.label}
+                  muted
                   style={[
                     styles.summaryCard,
                     {
-                      backgroundColor: colors.cardMuted,
                       width: summaryCardWidth,
                     },
                   ]}
                 >
-                  <Text style={[styles.summaryLabel, { color: colors.textSoft }]}>
-                    {item.label}
-                  </Text>
+                  <Text style={[styles.summaryLabel, { color: colors.textSoft }]}>{card.label}</Text>
                   <Text
                     style={[
                       styles.summaryValue,
-                      {
-                        color: item.tone === "danger" ? colors.danger : colors.text,
-                      },
+                      { color: card.danger ? colors.danger : colors.text },
                     ]}
                   >
-                    {item.value}
+                    {card.value}
                   </Text>
-                </View>
+                </Surface>
               ))}
             </View>
 
-            <Text style={[styles.copy, { color: colors.textSoft }]}>
+            <Text style={[styles.meta, { color: colors.textSoft }]}>
               Created {formatDateTime(company.createdAt)}
             </Text>
           </Surface>
 
-          <SegmentedControl
-            options={tabOptions}
-            value={tab}
-            onChange={(value) => setTab(value as DetailTab)}
-          />
+          <SegmentedControl options={tabOptions} value={tab} onChange={(value) => setTab(value as DetailTab)} />
 
-          {tab === "services"
-            ? company.services.length
-              ? company.services.map((service) => (
-                  <Surface key={service.id} style={styles.card}>
-                    <View style={[styles.rowBetween, compact && styles.rowStack]}>
+          {tab === "services" ? (
+            company.services.length ? (
+              company.services.map((service) => (
+                <Surface key={service.id} style={styles.listCard}>
+                  <View style={styles.rowBetween}>
+                    <View style={styles.flexCopy}>
+                      <Text style={[styles.value, { color: colors.text }]}>{service.serviceName}</Text>
+                      <Text style={[styles.meta, { color: colors.textSoft }]}>
+                        Submitted {formatDateTime(service.submitDate)}
+                      </Text>
+                    </View>
+                    <Badge label={formatEnumLabel(service.status)} tone={getStatusTone(service.status)} />
+                  </View>
+                </Surface>
+              ))
+            ) : (
+              <EmptyState
+                title="No active services"
+                description="This company does not have any tracked services yet."
+              />
+            )
+          ) : null}
+
+          {tab === "payments" ? (
+            company.payments.length ? (
+              company.payments.map((payment) => {
+                const dueAmount = parseMoney(payment.dueAmount);
+
+                return (
+                  <Surface key={payment.id} style={styles.listCard}>
+                    <View style={styles.paymentHeader}>
                       <View style={styles.flexCopy}>
                         <Text style={[styles.value, { color: colors.text }]}>
-                          {service.serviceName}
+                          {payment.referenceLabel || payment.description || `Payment ${payment.id}`}
                         </Text>
-                        <Text style={[styles.copy, { color: colors.textSoft }]}>
-                          Submitted {formatDateTime(service.submitDate)}
+                        <Text style={[styles.meta, { color: colors.textSoft }]}>
+                          {payment.description}
                         </Text>
                       </View>
-                      <Badge label={service.status} tone={getStatusTone(service.status)} />
+                      <Badge label={formatEnumLabel(payment.status)} tone={dueAmount > 0 ? "pending" : "completed"} />
                     </View>
-                  </Surface>
-                ))
-              : (
-                  <EmptyState
-                    title="No active services"
-                    description="This company does not have any tracked services yet."
-                  />
-                )
-            : null}
 
-          {tab === "payments"
-            ? company.payments.length
-              ? company.payments.map((payment) => (
-                  <Surface key={payment.id} style={styles.card}>
-                    <Text style={[styles.value, { color: colors.text }]}>
-                      {payment.referenceLabel || payment.description || `Payment ${payment.id}`}
-                    </Text>
-                    <Text style={[styles.copy, { color: colors.textDim }]}>
-                      Total {formatCurrency(payment.totalAmount, payment.currency)} | Paid{" "}
-                      {formatCurrency(payment.paidAmount, payment.currency)} | Due{" "}
-                      {formatCurrency(payment.dueAmount, payment.currency)}
-                    </Text>
-                    <Text style={[styles.copy, { color: colors.textSoft }]}>
-                      Method {formatPaymentMethod(payment.latestPaymentMethod)} | Status{" "}
+                    <View style={[styles.breakdown, { backgroundColor: colors.cardMuted, borderColor: colors.border }]}>
+                      <Text style={[styles.breakdownLine, { color: colors.text }]}>
+                        Total: {formatCurrency(payment.totalAmount, payment.currency)}
+                      </Text>
+                      <Text style={[styles.breakdownLine, { color: colors.text }]}>
+                        Paid: {formatCurrency(payment.paidAmount, payment.currency)}
+                      </Text>
+                      <Text style={[styles.breakdownLine, { color: colors.danger }]}>
+                        Due: {formatCurrency(payment.dueAmount, payment.currency)}
+                      </Text>
+                    </View>
+
+                    <Text style={[styles.meta, { color: colors.textSoft }]}>
+                      Method {formatPaymentMethod(payment.latestPaymentMethod)} · Status{" "}
                       {formatPaymentStatus(payment.latestTransactionStatus)}
                     </Text>
-                    <Text style={[styles.copy, { color: colors.textSoft }]}>
-                      Last activity {formatDateTime(payment.latestActivityAt)}
+                    <Text style={[styles.meta, { color: colors.textSoft }]}>
+                      Last activity {formatDateTime(payment.latestActivityAt)} · {payment.transactionCount} transaction
+                      {payment.transactionCount === 1 ? "" : "s"}
                     </Text>
-                  </Surface>
-                ))
-              : (
-                  <EmptyState
-                    title="No payments yet"
-                    description="Payment records for this company will appear here."
-                  />
-                )
-            : null}
 
-          {tab === "documents"
-            ? (
-                <View style={styles.documentsStack}>
-                  <SegmentedControl
-                    options={documentTypeOptions}
-                    value={documentTab}
-                    onChange={(value) => setDocumentTab(value as DocumentTab)}
-                  />
-                  {visibleDocuments.length
-                    ? visibleDocuments.map((document) => {
-                        const fileName = resolveDocumentFileName({
-                          title: document.description,
-                          attachment: document.attachment,
-                          fallback: `document-${document.id}.pdf`,
-                        });
-
-                        return (
-                          <Surface key={document.id} style={styles.card}>
-                            <View style={[styles.rowBetween, compact && styles.rowStack]}>
-                              <View style={styles.flexCopy}>
-                                <Text style={[styles.value, { color: colors.text }]}>
-                                  {document.description}
-                                </Text>
-                                <Text style={[styles.copy, { color: colors.textSoft }]}>
-                                  {formatDocumentTypeLabel(document.documentType)} | Order #
-                                  {document.orderId}
-                                </Text>
-                                <Text style={[styles.copy, { color: colors.textSoft }]}>
-                                  {document.uploadedByName} | {formatDateTime(document.createdAt)}
-                                </Text>
-                              </View>
-                              <View style={styles.profileDocumentActions}>
-                                <Pressable
-                                  onPress={() => {
-                                    void openDocumentPreview(config, document.attachment, fileName).catch(
-                                      (error) => {
-                                        Alert.alert(
-                                          "Preview failed",
-                                          error instanceof Error
-                                            ? error.message
-                                            : "Could not open document.",
-                                        );
-                                      },
-                                    );
-                                  }}
-                                  style={({ pressed }) => [
-                                    styles.inlineIconAction,
-                                    pressed ? styles.inlineIconActionPressed : null,
-                                  ]}
-                                >
-                                  <Ionicons color={colors.text} name="eye-outline" size={18} />
-                                </Pressable>
-                                <Pressable
-                                  onPress={() => {
-                                    void downloadDocument(config, document.attachment, fileName).catch(
-                                      (error) => {
-                                        Alert.alert(
-                                          "Download failed",
-                                          error instanceof Error
-                                            ? error.message
-                                            : "Could not download document.",
-                                        );
-                                      },
-                                    );
-                                  }}
-                                  style={({ pressed }) => [
-                                    styles.inlineIconAction,
-                                    pressed ? styles.inlineIconActionPressed : null,
-                                  ]}
-                                >
-                                  <Ionicons color={colors.text} name="download-outline" size={18} />
-                                </Pressable>
-                              </View>
-                            </View>
-                          </Surface>
-                        );
-                      })
-                    : (
-                        <EmptyState
-                          title={`No ${documentTab === "SUBMITTED" ? "submitted" : "received"} files`}
-                          description="Documents for this company will appear here."
-                        />
-                      )}
-                </View>
-              )
-            : null}
-
-          {tab === "profile"
-            ? (
-                <View style={styles.stack}>
-                  <Surface style={styles.card}>
-                    <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                      User Information
-                    </Text>
-                    <View style={styles.profileRows}>
-                      {userInformationRows.map((row) => (
-                        <View
-                          key={row.label}
-                          style={[
-                            styles.profileRow,
-                            { borderBottomColor: colors.border },
-                          ]}
-                        >
-                          <Text style={[styles.profileKey, { color: colors.textSoft }]}>
-                            {row.label}
-                          </Text>
-                          <Text style={[styles.profileValue, { color: colors.text }]}>
-                            {row.value}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  </Surface>
-
-                  <Surface style={styles.card}>
-                    <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                      Other Details
-                    </Text>
-                    <View style={styles.profileRows}>
-                      {otherDetailsRows.map((row) => (
-                        <View
-                          key={row.label}
-                          style={[
-                            styles.profileRow,
-                            { borderBottomColor: colors.border },
-                          ]}
-                        >
-                          <Text style={[styles.profileKey, { color: colors.textSoft }]}>
-                            {row.label}
-                          </Text>
-                          <Text style={[styles.profileValue, { color: colors.text }]}>
-                            {row.value}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  </Surface>
-
-                  <Surface style={styles.card}>
-                    <View style={[styles.rowBetween, compact && styles.rowStack]}>
-                      <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                        Documents
-                      </Text>
-                      <Button
-                        label="Add Documents"
-                        tone="secondary"
-                        onPress={() => setProfileModalOpen(true)}
-                        style={compact ? styles.fullWidthButton : undefined}
-                      />
-                    </View>
-
-                    {profileDocuments.length ? (
-                      <View style={styles.profileDocumentsList}>
-                        {profileDocuments.map((document, index) => (
+                    {payment.transactions.length ? (
+                      <View style={styles.transactionList}>
+                        {payment.transactions.map((transaction) => (
                           <View
-                            key={document.id}
-                            style={[
-                              styles.profileDocumentRow,
-                              {
-                                borderBottomColor: colors.border,
-                              },
-                              index === profileDocuments.length - 1
-                                ? styles.profileDocumentRowLast
-                                : null,
-                            ]}
+                            key={transaction.id}
+                            style={[styles.transactionRow, { borderBottomColor: colors.border }]}
                           >
-                            <View style={styles.profileDocumentCopy}>
-                              <Text style={[styles.value, { color: colors.text }]}>
-                                {document.name}
+                            <View style={styles.flexCopy}>
+                              <Text style={[styles.transactionAmount, { color: colors.text }]}>
+                                {formatCurrency(transaction.amount, transaction.currency)}
+                              </Text>
+                              <Text style={[styles.transactionMeta, { color: colors.textSoft }]}>
+                                {formatPaymentMethod(transaction.paymentMethod)} ·{" "}
+                                {formatPaymentStatus(transaction.status)}
                               </Text>
                             </View>
-                            <Text style={[styles.documentSize, { color: colors.textSoft }]}>
-                              {document.sizeLabel}
+                            <Text style={[styles.transactionMeta, { color: colors.textSoft }]}>
+                              {formatDateTime(transaction.createdAt)}
                             </Text>
-                            <View style={styles.profileDocumentActions}>
-                              <Pressable
-                                onPress={() => handlePreviewProfileDocument(document)}
-                                style={({ pressed }) => [
-                                  styles.inlineIconAction,
-                                  pressed ? styles.inlineIconActionPressed : null,
-                                ]}
-                              >
-                                <Ionicons color={colors.text} name="eye-outline" size={18} />
-                              </Pressable>
-                              <Pressable
-                                onPress={() =>
-                                  setProfileDocuments((current) =>
-                                    current.filter((item) => item.id !== document.id),
-                                  )
-                                }
-                                style={({ pressed }) => [
-                                  styles.inlineIconAction,
-                                  pressed ? styles.inlineIconActionPressed : null,
-                                ]}
-                              >
-                                <Ionicons color={colors.danger} name="trash-outline" size={18} />
-                              </Pressable>
-                            </View>
                           </View>
                         ))}
                       </View>
-                    ) : (
-                      <Text style={[styles.copy, { color: colors.textSoft }]}>
-                        No document found
-                      </Text>
-                    )}
+                    ) : null}
+
+                    {payment.canCollectDue && dueAmount > 0 && payment.collectDueOrderId ? (
+                      <Button
+                        label="Collect Due"
+                        onPress={() => openCollectModal(payment.id, payment.dueAmount)}
+                      />
+                    ) : null}
                   </Surface>
-                </View>
-              )
-            : null}
+                );
+              })
+            ) : (
+              <EmptyState
+                title="No payments yet"
+                description="Payment records for this company will appear here."
+              />
+            )
+          ) : null}
+
+          {tab === "documents" ? (
+            <View style={styles.documentsStack}>
+              <SegmentedControl
+                options={documentTypeOptions}
+                value={documentTab}
+                onChange={(value) => setDocumentTab(value as DocumentTab)}
+              />
+              {visibleDocuments.length ? (
+                visibleDocuments.map((document) => {
+                  const hasAttachment = Boolean(document.attachment?.trim());
+                  const fileName = resolveDocumentFileName({
+                    title: document.description,
+                    attachment: document.attachment ?? "",
+                    fallback: `document-${document.id}.pdf`,
+                  });
+
+                  return (
+                    <Surface key={document.id} style={styles.listCard}>
+                      <View style={styles.rowBetween}>
+                        <View style={styles.flexCopy}>
+                          <Text style={[styles.value, { color: colors.text }]}>{document.description}</Text>
+                          <Text style={[styles.meta, { color: colors.textSoft }]}>
+                            {formatDocumentTypeLabel(document.documentType)} · Order #{document.orderId}
+                          </Text>
+                          <Text style={[styles.meta, { color: colors.textSoft }]}>
+                            {document.uploadedByName} · {formatDateTime(document.createdAt)}
+                          </Text>
+                          {document.note?.trim() ? (
+                            <Text style={[styles.note, { color: colors.accentStrong }]}>
+                              <Text style={styles.noteStrong}>Note: </Text>
+                              <Text style={styles.noteStrong}>{document.note.trim()}</Text>
+                            </Text>
+                          ) : null}
+                        </View>
+                        {hasAttachment ? (
+                          <View style={styles.documentActions}>
+                            <IconButton
+                              onPress={() => {
+                                void openDocumentPreview(config, document.attachment ?? "", fileName).catch(
+                                  (error) => {
+                                    Alert.alert(
+                                      "Preview failed",
+                                      error instanceof Error
+                                        ? error.message
+                                        : "Could not open document.",
+                                    );
+                                  },
+                                );
+                              }}
+                            >
+                              <Ionicons color={colors.text} name="eye-outline" size={18} />
+                            </IconButton>
+                            <IconButton
+                              onPress={() => {
+                                void downloadDocument(config, document.attachment ?? "", fileName).catch(
+                                  (error) => {
+                                    Alert.alert(
+                                      "Download failed",
+                                      error instanceof Error
+                                        ? error.message
+                                        : "Could not download document.",
+                                    );
+                                  },
+                                );
+                              }}
+                            >
+                              <Ionicons color={colors.text} name="download-outline" size={18} />
+                            </IconButton>
+                          </View>
+                        ) : null}
+                      </View>
+                    </Surface>
+                  );
+                })
+              ) : (
+                <EmptyState
+                  title={`No ${documentTab === "SUBMITTED" ? "submitted" : "received"} files`}
+                  description="Documents for this company will appear here."
+                />
+              )}
+            </View>
+          ) : null}
+
+          {tab === "profile" ? (
+            <Surface style={styles.listCard}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Profile details</Text>
+              <View style={styles.profileRows}>
+                {profileRows.map((row, index) => (
+                  <View
+                    key={row.label}
+                    style={[
+                      styles.profileRow,
+                      {
+                        borderBottomColor:
+                          index === profileRows.length - 1 ? "transparent" : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.profileKey, { color: colors.textSoft }]}>{row.label}</Text>
+                    <Text style={[styles.profileValue, { color: colors.text }]}>{row.value}</Text>
+                  </View>
+                ))}
+              </View>
+            </Surface>
+          ) : null}
         </View>
       ) : null}
 
       <Modal
         animationType="fade"
         transparent
-        visible={profileModalOpen}
+        visible={Boolean(activeCollectPayment)}
         onRequestClose={() => {
-          if (profileDocumentsUploading) {
+          if (submittingPayment) {
             return;
           }
 
-          setProfileModalOpen(false);
+          setCollectingPaymentId(null);
         }}
       >
         <View style={styles.modalOverlay}>
           <Surface style={styles.modalSheet}>
             <View style={styles.modalHeader}>
-              <View style={styles.modalHeaderCopy}>
-                <Text style={[styles.modalEyebrow, { color: colors.textSoft }]}>
-                  Profile
-                </Text>
-                <Text style={[styles.modalTitle, { color: colors.text }]}>Add Documents</Text>
+              <View style={styles.flexCopy}>
+                <Text style={[styles.modalEyebrow, { color: colors.accent }]}>Payment</Text>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Collect due</Text>
               </View>
               <IconButton
-                disabled={profileDocumentsUploading}
-                onPress={() => setProfileModalOpen(false)}
+                disabled={submittingPayment}
+                onPress={() => setCollectingPaymentId(null)}
               >
                 <Ionicons color={colors.text} name="close" size={18} />
               </IconButton>
             </View>
 
-            <ScrollView
-              contentContainerStyle={styles.modalContent}
-              showsVerticalScrollIndicator={false}
-            >
-              <Button
-                label="Choose Files"
-                tone="secondary"
-                disabled={profileDocumentsUploading}
-                onPress={() => {
-                  void handlePickProfileDocuments();
-                }}
-              />
+            {activeCollectPayment ? (
+              <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false}>
+                <View
+                  style={[
+                    styles.breakdown,
+                    { backgroundColor: colors.cardMuted, borderColor: colors.border },
+                  ]}
+                >
+                  <Text style={[styles.breakdownLine, { color: colors.text }]}>
+                    Reference: {activeCollectPayment.referenceLabel}
+                  </Text>
+                  <Text style={[styles.breakdownLine, { color: colors.text }]}>
+                    Paid: {formatCurrency(activeCollectPayment.paidAmount, activeCollectPayment.currency)}
+                  </Text>
+                  <Text style={[styles.breakdownLine, { color: colors.danger }]}>
+                    Due: {formatCurrency(activeCollectPayment.dueAmount, activeCollectPayment.currency)}
+                  </Text>
+                </View>
 
-              {pendingProfileDocuments.length ? (
-                pendingProfileDocuments.map((document) => (
-                  <View
-                    key={document.id}
-                    style={[
-                      styles.pendingDocumentCard,
-                      { backgroundColor: colors.cardMuted },
-                    ]}
-                  >
-                    <View style={styles.rowBetween}>
-                      <View style={styles.flexCopy}>
-                        <Text style={[styles.value, { color: colors.text }]}>
-                          {document.asset.name}
-                        </Text>
-                        <Text style={[styles.copy, { color: colors.textSoft }]}>
-                          {document.sizeLabel}
-                        </Text>
-                      </View>
-                      <Pressable
-                        disabled={profileDocumentsUploading}
-                        onPress={() =>
-                          setPendingProfileDocuments((current) =>
-                            current.filter((item) => item.id !== document.id),
-                          )
-                        }
-                        style={({ pressed }) => [
-                          styles.inlineIconAction,
-                          pressed ? styles.inlineIconActionPressed : null,
-                        ]}
-                      >
-                        <Ionicons color={colors.danger} name="trash-outline" size={18} />
-                      </Pressable>
-                    </View>
+                <TextField
+                  keyboardType="decimal-pad"
+                  label="Amount to collect"
+                  value={collectAmount}
+                  onChangeText={setCollectAmount}
+                />
+                <TextField
+                  label="Note"
+                  placeholder="Optional payment note"
+                  value={collectNote}
+                  onChangeText={setCollectNote}
+                />
 
-                    <TextField
-                      label="Title"
-                      value={document.title}
-                      onChangeText={(value) =>
-                        setPendingProfileDocuments((current) =>
-                          current.map((item) =>
-                            item.id === document.id ? { ...item, title: value } : item,
-                          ),
-                        )
-                      }
-                    />
-                  </View>
-                ))
-              ) : (
-                <Text style={[styles.copy, { color: colors.textSoft }]}>
-                  Choose one or more files to add profile documents.
-                </Text>
-              )}
-            </ScrollView>
+                <Button
+                  label="Use full due"
+                  tone="secondary"
+                  onPress={() => setCollectAmount(String(parseMoney(activeCollectPayment.dueAmount)))}
+                />
+              </ScrollView>
+            ) : null}
 
             <View style={styles.modalFooter}>
               <Button
                 label="Cancel"
                 tone="ghost"
-                disabled={profileDocumentsUploading}
-                onPress={() => setProfileModalOpen(false)}
+                disabled={submittingPayment}
+                onPress={() => setCollectingPaymentId(null)}
                 style={styles.modalButton}
               />
               <Button
-                label="Upload Documents"
-                loading={profileDocumentsUploading}
-                disabled={pendingProfileDocuments.length === 0}
-                onPress={() => {
-                  void handleUploadProfileDocuments();
-                }}
+                label="Collect Payment"
+                loading={submittingPayment}
+                onPress={() => void handleCollectDue()}
                 style={styles.modalButton}
               />
             </View>
@@ -833,55 +633,60 @@ export function CompanyDetailScreen({ route }: RootStackScreenProps<"CompanyDeta
 
 const styles = StyleSheet.create({
   stack: {
-    gap: 14,
+    gap: 16,
   },
   hero: {
+    gap: 14,
+  },
+  heroTop: {
+    alignItems: "flex-start",
+    flexDirection: "row",
     gap: 12,
+    justifyContent: "space-between",
+  },
+  heroCopy: {
+    flex: 1,
+    gap: 4,
+    minWidth: 0,
   },
   companyName: {
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: "900",
-    letterSpacing: -0.8,
+    letterSpacing: -1,
   },
   owner: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "700",
   },
-  copy: {
+  meta: {
     fontSize: 13,
-    lineHeight: 18,
-  },
-  contactStack: {
-    gap: 2,
+    lineHeight: 19,
   },
   summaryGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: 10,
     justifyContent: "space-between",
   },
   summaryCard: {
-    borderRadius: 8,
-    gap: 6,
-    minHeight: 76,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
+    gap: 8,
+    minHeight: 98,
   },
   summaryLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 0.5,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.8,
     textTransform: "uppercase",
   },
   summaryValue: {
-    fontSize: 18,
+    fontSize: 24,
     fontWeight: "900",
-    letterSpacing: -0.4,
-  },
-  card: {
-    gap: 12,
+    letterSpacing: -0.8,
   },
   documentsStack: {
+    gap: 12,
+  },
+  listCard: {
     gap: 12,
   },
   rowBetween: {
@@ -889,10 +694,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
     justifyContent: "space-between",
-  },
-  rowStack: {
-    alignItems: "flex-start",
-    flexDirection: "column",
   },
   flexCopy: {
     flex: 1,
@@ -903,9 +704,57 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "800",
   },
-  sectionTitle: {
-    fontSize: 16,
+  paymentHeader: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "space-between",
+  },
+  breakdown: {
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  breakdownLine: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  transactionList: {
+    gap: 0,
+  },
+  transactionRow: {
+    alignItems: "center",
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "space-between",
+    paddingVertical: 10,
+  },
+  transactionAmount: {
+    fontSize: 13,
     fontWeight: "800",
+  },
+  transactionMeta: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  documentActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  note: {
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 4,
+  },
+  noteStrong: {
+    fontWeight: "800",
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "900",
   },
   profileRows: {
     gap: 0,
@@ -913,98 +762,48 @@ const styles = StyleSheet.create({
   profileRow: {
     borderBottomWidth: 1,
     gap: 4,
-    paddingVertical: 10,
+    paddingVertical: 12,
   },
   profileKey: {
-    fontSize: 12,
-    fontWeight: "700",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.8,
     textTransform: "uppercase",
   },
   profileValue: {
     fontSize: 14,
     fontWeight: "600",
-    lineHeight: 20,
-  },
-  profileDocumentsList: {
-    gap: 0,
-  },
-  profileDocumentRow: {
-    alignItems: "center",
-    borderBottomWidth: 1,
-    flexDirection: "row",
-    gap: 10,
-    paddingVertical: 10,
-  },
-  profileDocumentRowLast: {
-    borderBottomWidth: 0,
-    paddingBottom: 0,
-  },
-  profileDocumentCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  profileDocumentActions: {
-    flexDirection: "row",
-    gap: 4,
-  },
-  documentSize: {
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  inlineIconAction: {
-    alignItems: "center",
-    borderRadius: 8,
-    justifyContent: "center",
-    minHeight: 34,
-    minWidth: 34,
-    padding: 6,
-  },
-  inlineIconActionPressed: {
-    opacity: 0.72,
-  },
-  fullWidthButton: {
-    minWidth: "100%",
+    lineHeight: 21,
   },
   modalOverlay: {
-    backgroundColor: "rgba(2, 8, 23, 0.86)",
+    backgroundColor: "rgba(2, 8, 23, 0.7)",
     flex: 1,
     justifyContent: "center",
     padding: 18,
   },
   modalSheet: {
-    alignSelf: "center",
-    gap: 14,
-    maxHeight: "84%",
-    width: "100%",
+    gap: 16,
+    maxHeight: "82%",
   },
   modalHeader: {
-    alignItems: "flex-start",
+    alignItems: "center",
     flexDirection: "row",
     gap: 12,
     justifyContent: "space-between",
   },
-  modalHeaderCopy: {
-    flex: 1,
-    gap: 4,
-    minWidth: 0,
-  },
   modalEyebrow: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 1.1,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1,
     textTransform: "uppercase",
   },
   modalTitle: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: "900",
+    letterSpacing: -0.6,
   },
   modalContent: {
-    gap: 12,
-  },
-  pendingDocumentCard: {
-    borderRadius: 8,
-    gap: 12,
-    padding: 10,
+    gap: 14,
   },
   modalFooter: {
     flexDirection: "row",

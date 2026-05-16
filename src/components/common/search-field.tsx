@@ -11,7 +11,7 @@ export function SearchField(props: TextInputProps) {
         styles.wrapper,
         {
           backgroundColor: colors.cardMuted,
-          borderColor: "transparent",
+          borderColor: colors.border,
         },
       ]}
     >
@@ -29,15 +29,16 @@ export function SearchField(props: TextInputProps) {
 const styles = StyleSheet.create({
   wrapper: {
     alignItems: "center",
-    borderRadius: 8,
+    borderRadius: 18,
     borderWidth: 1,
     flexDirection: "row",
-    gap: 10,
-    minHeight: 46,
-    paddingHorizontal: 14,
+    gap: 12,
+    minHeight: 52,
+    paddingHorizontal: 16,
   },
   input: {
     flex: 1,
     fontSize: 15,
+    minHeight: 52,
   },
 });
