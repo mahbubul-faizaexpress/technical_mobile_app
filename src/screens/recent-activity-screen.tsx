@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { RECENT_ACTIVITIES_QUERY } from "@/api/documents";
 import type { RecentActivityCounts, RecentActivityItem, RecentActivityType } from "@/api/types";
@@ -37,6 +37,72 @@ type RecentActivityResponse = {
   };
 };
 
+function getCountForActivityOption(
+  counts: RecentActivityCounts | undefined,
+  value: RecentActivityType | "ALL",
+) {
+  if (!counts) {
+    return undefined;
+  }
+
+  if (value === "ALL") {
+    return counts.all;
+  }
+
+  if (value === "DOCUMENT") {
+    return counts.documents;
+  }
+
+  if (value === "ORDER") {
+    return counts.orders;
+  }
+
+  return counts.company;
+}
+
+function getActivityBadgeTone(item: RecentActivityItem) {
+  const normalizedBadge = item.badgeLabel?.trim().toLowerCase() ?? "";
+  const normalizedChips = item.chips.map((chip) => chip.trim().toLowerCase());
+
+  if (item.activityType === "DOCUMENT") {
+    return normalizedBadge === "received" ? "completed" : "pending";
+  }
+
+  if (item.activityType === "ORDER") {
+    return "processing";
+  }
+
+  if (item.activityType === "COMPANY") {
+    return "accent";
+  }
+
+  if (normalizedChips.includes("completed") || normalizedChips.includes("paid")) {
+    return "completed";
+  }
+
+  if (normalizedChips.includes("processing")) {
+    return "processing";
+  }
+
+  return "accent";
+}
+
+function buildEmptyStateDescription(type: RecentActivityType | "ALL") {
+  if (type === "DOCUMENT") {
+    return "এই ফিল্টারে এখন কোনো document activity নেই।";
+  }
+
+  if (type === "ORDER") {
+    return "এই ফিল্টারে এখন কোনো order activity নেই।";
+  }
+
+  if (type === "COMPANY") {
+    return "এই ফিল্টারে এখন কোনো company activity নেই।";
+  }
+
+  return "অন্য filter try করো বা search clear করে আবার দেখো।";
+}
+
 export function RecentActivityScreen() {
   const { colors } = useAppTheme();
   const { width } = useWindowDimensions();
@@ -64,6 +130,16 @@ export function RecentActivityScreen() {
 
   const pageData = resource.data?.recentActivities;
   const countSummary = pageData?.counts;
+  const segmentedOptions = useMemo(
+    () =>
+      activityOptions.map((option) => ({
+        ...option,
+        meta:
+          getCountForActivityOption(countSummary, option.value)?.toString() ?? undefined,
+      })),
+    [countSummary],
+  );
+  const activeFilterLabel = formatActivityTypeLabel(type);
 
   return (
     <Screen
@@ -83,7 +159,7 @@ export function RecentActivityScreen() {
           }}
         />
         <SegmentedControl
-          options={activityOptions}
+          options={segmentedOptions}
           value={type}
           onChange={(value) => {
             setType(value);
@@ -105,14 +181,14 @@ export function RecentActivityScreen() {
             </Text>
             {countSummary ? (
               <Text style={[styles.summaryMeta, { color: colors.textDim }]}>
-                All {countSummary.all} | Docs {countSummary.documents} | Orders {countSummary.orders} | Company{" "}
-                {countSummary.company}
+                {activeFilterLabel} feed | All {countSummary.all} | Docs {countSummary.documents} | Orders{" "}
+                {countSummary.orders} | Company {countSummary.company}
               </Text>
             ) : null}
             {pageData.items.length === 0 ? (
               <EmptyState
                 title="No recent activity"
-                description="Try a different filter or clear your search."
+                description={buildEmptyStateDescription(type)}
               />
             ) : (
               pageData.items.map((item) => (
@@ -120,7 +196,8 @@ export function RecentActivityScreen() {
                   <View style={[styles.rowBetween, compact && styles.rowStack]}>
                     <Badge
                       label={item.badgeLabel?.trim() || formatActivityTypeLabel(item.activityType)}
-                      tone="accent"
+                      tone={getActivityBadgeTone(item)}
+                      size="compact"
                     />
                     <Text style={[styles.meta, { color: colors.textSoft }]}>
                       {formatRelativeTime(item.occurredAt)}
@@ -130,21 +207,26 @@ export function RecentActivityScreen() {
                   <Text style={[styles.description, { color: colors.textDim }]}>
                     {item.description}
                   </Text>
+                  {item.chips.length ? (
+                    <View style={styles.chipsRow}>
+                      {item.chips.map((chip, index) => (
+                        <Badge key={`${item.id}-${chip}-${index}`} label={chip} tone="neutral" size="compact" />
+                      ))}
+                    </View>
+                  ) : null}
                   <View style={[styles.rowBetween, compact && styles.rowStack]}>
                     <Text style={[styles.meta, { color: colors.textSoft }]}>
-                      {item.companyName}
+                      Company: {item.companyName}
                       {item.orderNumber ? ` | ${item.orderNumber}` : ""}
                     </Text>
                     {item.actorName?.trim() ? (
                       <Text style={[styles.meta, { color: colors.textSoft }]}>
-                        {item.actorName.trim()}
+                        By: {item.actorName.trim()}
                       </Text>
                     ) : null}
                   </View>
                   <View style={[styles.rowBetween, compact && styles.rowStack]}>
-                    <Text style={[styles.meta, { color: colors.textSoft }]}>
-                      {item.laneLabel}
-                    </Text>
+                    <Badge label={item.laneLabel} tone="neutral" size="compact" />
                     <Text style={[styles.meta, { color: colors.textSoft }]}>
                       {formatDateTime(item.occurredAt)}
                     </Text>
@@ -191,6 +273,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "500",
     lineHeight: 18,
+  },
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
   },
   card: {
     gap: 12,

@@ -174,6 +174,8 @@ export function CompanyDetailScreen({ route }: RootStackScreenProps<"CompanyDeta
 
   const profileRows = useMemo(
     () => [
+      { label: "Company", value: companyProfile?.name ?? company?.companyName ?? "Not available" },
+      { label: "Country", value: company?.country ?? "Not available" },
       {
         label: "Owner",
         value:
@@ -206,7 +208,7 @@ export function CompanyDetailScreen({ route }: RootStackScreenProps<"CompanyDeta
         value: companyProfile?.companyDetails?.address ?? "Not available",
       },
     ],
-    [company?.email, company?.ownerName, company?.phone, companyProfile],
+    [company?.companyName, company?.country, company?.email, company?.ownerName, company?.phone, companyProfile],
   );
 
   const openCollectModal = (paymentId: string, dueAmount: string) => {
@@ -365,9 +367,12 @@ export function CompanyDetailScreen({ route }: RootStackScreenProps<"CompanyDeta
                         <Text style={[styles.value, { color: colors.text }]}>
                           {payment.referenceLabel || payment.description || `Payment ${payment.id}`}
                         </Text>
-                        <Text style={[styles.meta, { color: colors.textSoft }]}>
-                          {payment.description}
-                        </Text>
+                        {payment.description?.trim() &&
+                        payment.description.trim() !== payment.referenceLabel?.trim() ? (
+                          <Text style={[styles.meta, { color: colors.textSoft }]}>
+                            {payment.description}
+                          </Text>
+                        ) : null}
                       </View>
                       <Badge label={formatEnumLabel(payment.status)} tone={dueAmount > 0 ? "pending" : "completed"} />
                     </View>
@@ -385,11 +390,11 @@ export function CompanyDetailScreen({ route }: RootStackScreenProps<"CompanyDeta
                     </View>
 
                     <Text style={[styles.meta, { color: colors.textSoft }]}>
-                      Method {formatPaymentMethod(payment.latestPaymentMethod)} · Status{" "}
+                      Method {formatPaymentMethod(payment.latestPaymentMethod)} | Status{" "}
                       {formatPaymentStatus(payment.latestTransactionStatus)}
                     </Text>
                     <Text style={[styles.meta, { color: colors.textSoft }]}>
-                      Last activity {formatDateTime(payment.latestActivityAt)} · {payment.transactionCount} transaction
+                      Last activity {formatDateTime(payment.latestActivityAt)} | {payment.transactionCount} transaction
                       {payment.transactionCount === 1 ? "" : "s"}
                     </Text>
 
@@ -405,7 +410,7 @@ export function CompanyDetailScreen({ route }: RootStackScreenProps<"CompanyDeta
                                 {formatCurrency(transaction.amount, transaction.currency)}
                               </Text>
                               <Text style={[styles.transactionMeta, { color: colors.textSoft }]}>
-                                {formatPaymentMethod(transaction.paymentMethod)} ·{" "}
+                                {formatPaymentMethod(transaction.paymentMethod)} |{" "}
                                 {formatPaymentStatus(transaction.status)}
                               </Text>
                             </View>
@@ -456,10 +461,10 @@ export function CompanyDetailScreen({ route }: RootStackScreenProps<"CompanyDeta
                         <View style={styles.flexCopy}>
                           <Text style={[styles.value, { color: colors.text }]}>{document.description}</Text>
                           <Text style={[styles.meta, { color: colors.textSoft }]}>
-                            {formatDocumentTypeLabel(document.documentType)} · Order #{document.orderId}
+                            {formatDocumentTypeLabel(document.documentType)} | Order #{document.orderId}
                           </Text>
                           <Text style={[styles.meta, { color: colors.textSoft }]}>
-                            {document.uploadedByName} · {formatDateTime(document.createdAt)}
+                            {document.uploadedByName} | {formatDateTime(document.createdAt)}
                           </Text>
                           {document.note?.trim() ? (
                             <Text style={[styles.note, { color: colors.accentStrong }]}>
@@ -813,3 +818,4 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 });
+
