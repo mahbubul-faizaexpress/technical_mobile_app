@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { Link } from "@react-navigation/native";
 import { COMPANY_ACCOUNTS_QUERY } from "@/api/documents";
 import type { CompanyAccount } from "@/api/types";
 import type { MainTabScreenProps } from "@/navigation/types";
@@ -25,6 +26,63 @@ type CompanyAccountsResponse = {
     totalCount: number;
   };
 };
+
+type CompanyCardProps = {
+  colors: ReturnType<typeof useAppTheme>["colors"];
+  company: CompanyAccount;
+  compact: boolean;
+  onOpen: () => void;
+};
+
+function CompanyCard({ colors, company, compact, onOpen }: CompanyCardProps) {
+  return (
+    <View style={styles.cardContainer}>
+      <Link
+        accessibilityLabel={`Open ${company.companyName}`}
+        screen="CompanyDetail"
+        params={{
+          companyId: company.id,
+          companyName: company.companyName,
+        }}
+        style={styles.cardOverlayLink}
+      >
+        Open {company.companyName}
+      </Link>
+      <Pressable accessibilityRole="button" onPress={onOpen} style={styles.cardPressable}>
+        <Surface style={styles.card}>
+          <View style={[styles.rowBetween, compact && styles.rowStack]}>
+            <View style={styles.copy}>
+              <Text style={[styles.name, { color: colors.text }]}>{company.companyName}</Text>
+              <Text style={[styles.owner, { color: colors.textDim }]}>{company.ownerName}</Text>
+            </View>
+            <View style={styles.badgeStack}>
+              <Badge label={company.country} tone="accent" />
+              <Badge label={`${company.pendingServicesCount}`} tone="pending" />
+            </View>
+          </View>
+
+          <Text style={[styles.meta, { color: colors.textSoft }]}>{company.email}</Text>
+          <Text style={[styles.meta, { color: colors.textSoft }]}>{company.phone}</Text>
+
+          <View style={styles.metrics}>
+            <Badge label={`Pending ${company.pendingServicesCount}`} tone="pending" />
+            <Badge label={`Processing ${company.processingServicesCount}`} tone="processing" />
+            <Badge label={`Completed ${company.completedServicesCount}`} tone="completed" />
+          </View>
+
+          <View style={styles.footer}>
+            <Text style={[styles.updated, { color: colors.textSoft }]}>
+              Updated {formatDateTime(company.updatedAt)}
+            </Text>
+            <Text style={[styles.updatedStrong, { color: colors.text }]}>
+              {company.totalServicesCount} services
+            </Text>
+          </View>
+        </Surface>
+      </Pressable>
+    </View>
+  );
+}
 
 export function CompaniesScreen({ navigation }: MainTabScreenProps<"Companies">) {
   const { colors } = useAppTheme();
@@ -147,56 +205,18 @@ export function CompaniesScreen({ navigation }: MainTabScreenProps<"Companies">)
               />
             ) : (
               pageData.items.map((company) => (
-                <Pressable
+                <CompanyCard
                   key={company.id}
-                  onPress={() =>
+                  colors={colors}
+                  company={company}
+                  compact={compact}
+                  onOpen={() =>
                     navigation.getParent()?.navigate("CompanyDetail", {
                       companyId: company.id,
                       companyName: company.companyName,
                     })
                   }
-                >
-                  <Surface style={styles.card}>
-                    <View style={[styles.rowBetween, compact && styles.rowStack]}>
-                      <View style={styles.copy}>
-                        <Text style={[styles.name, { color: colors.text }]}>{company.companyName}</Text>
-                        <Text style={[styles.owner, { color: colors.textDim }]}>{company.ownerName}</Text>
-                      </View>
-                      <View style={styles.badgeStack}>
-                        <Badge label={company.country} tone="accent" />
-                        <Badge label={`${company.pendingServicesCount}`} tone="pending" />
-                      </View>
-                    </View>
-
-                    <Text style={[styles.meta, { color: colors.textSoft }]}>
-                      {company.email}
-                    </Text>
-                    <Text style={[styles.meta, { color: colors.textSoft }]}>
-                      {company.phone}
-                    </Text>
-
-                    <View style={styles.metrics}>
-                      <Badge label={`Pending ${company.pendingServicesCount}`} tone="pending" />
-                      <Badge
-                        label={`Processing ${company.processingServicesCount}`}
-                        tone="processing"
-                      />
-                      <Badge
-                        label={`Completed ${company.completedServicesCount}`}
-                        tone="completed"
-                      />
-                    </View>
-
-                    <View style={styles.footer}>
-                      <Text style={[styles.updated, { color: colors.textSoft }]}>
-                        Updated {formatDateTime(company.updatedAt)}
-                      </Text>
-                      <Text style={[styles.updatedStrong, { color: colors.text }]}>
-                        {company.totalServicesCount} services
-                      </Text>
-                    </View>
-                  </Surface>
-                </Pressable>
+                />
               ))
             )}
 
@@ -270,6 +290,20 @@ const styles = StyleSheet.create({
   },
   card: {
     gap: 12,
+  },
+  cardContainer: {
+    position: "relative",
+  },
+  cardOverlayLink: {
+    ...StyleSheet.absoluteFillObject,
+    color: "transparent",
+    fontSize: 1,
+    lineHeight: 1,
+    opacity: 0.01,
+    zIndex: 2,
+  },
+  cardPressable: {
+    borderRadius: 24,
   },
   rowBetween: {
     alignItems: "center",
