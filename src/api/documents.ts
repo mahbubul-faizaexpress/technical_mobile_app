@@ -369,6 +369,144 @@ export const RECENT_ACTIVITIES_QUERY = `
   }
 `;
 
+export const TECHNICAL_REFUND_REQUESTS_QUERY = `
+  query TechnicalRefundRequests($input: RefundRequestsInput) {
+    technicalRefundRequestsPage(input: $input) {
+      items {
+        id
+        status
+        requestedAmount
+        approvedAmount
+        refundedAmount
+        currency
+        isManual
+        isFullyRefunded
+        reason
+        details
+        adminNote
+        orderId
+        paymentId
+        originalPaidAmountLabel
+        remainingPaidAmountLabel
+        totalRefundedAmountLabel
+        createdAt
+        updatedAt
+        reviewedAt
+        refundedAt
+        userInfo {
+          id
+          firstName
+          lastName
+          email
+          phone
+        }
+        reviewedByUserInfo {
+          id
+          firstName
+          lastName
+          email
+          phone
+        }
+        orderInfo {
+          id
+          status
+          price
+          companyInfo {
+            name
+          }
+        }
+        paymentInfo {
+          id
+          transactionId
+          paymentMethod
+          status
+          amount
+          currency
+        }
+      }
+      totalCount
+      page
+      pageSize
+      totalPages
+      hasNextPage
+      hasPreviousPage
+    }
+  }
+`;
+
+export const TECHNICAL_REFUND_REQUEST_QUERY = `
+  query TechnicalRefundRequest($refundRequestId: Int!) {
+    technicalRefundRequest(refundRequestId: $refundRequestId) {
+      id
+      status
+      requestedAmount
+      approvedAmount
+      refundedAmount
+      currency
+      isManual
+      isFullyRefunded
+      reason
+      details
+      adminNote
+      orderId
+      paymentId
+      originalPaidAmountLabel
+      remainingPaidAmountLabel
+      totalRefundedAmountLabel
+      createdAt
+      updatedAt
+      reviewedAt
+      refundedAt
+      userInfo {
+        id
+        firstName
+        lastName
+        email
+        phone
+      }
+      reviewedByUserInfo {
+        id
+        firstName
+        lastName
+        email
+        phone
+      }
+      orderInfo {
+        id
+        status
+        price
+        companyInfo {
+          name
+        }
+      }
+      paymentInfo {
+        id
+        transactionId
+        paymentMethod
+        status
+        amount
+        currency
+      }
+    }
+  }
+`;
+
+export const UPDATE_REFUND_REQUEST_MUTATION = `
+  mutation UpdateRefundRequest($refundRequestId: Int!, $input: UpdateRefundRequestInput!) {
+    updateRefundRequest(refundRequestId: $refundRequestId, input: $input) {
+      id
+      status
+      requestedAmount
+      approvedAmount
+      refundedAmount
+      adminNote
+      reviewedAt
+      refundedAt
+      updatedAt
+    }
+  }
+`;
+
 export const ADD_ORDER_FORM_DATA_QUERY = `
   query AddOrderFormData {
     technicalOrderFormData {

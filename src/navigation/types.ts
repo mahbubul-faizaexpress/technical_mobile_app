@@ -9,6 +9,7 @@ export type RootStackParamList = {
     companyId: number;
     companyName: string;
   };
+  Refund: undefined;
 };
 
 export type MainTabParamList = {

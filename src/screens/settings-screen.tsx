@@ -2,11 +2,12 @@ import { StyleSheet, Text, View } from "react-native";
 import { Button } from "@/components/common/button";
 import { Screen } from "@/components/common/screen";
 import { Surface } from "@/components/common/surface";
+import type { MainTabScreenProps } from "@/navigation/types";
 import { useAuth } from "@/providers/auth-provider";
 import { useAppConfig } from "@/providers/app-config-provider";
 import { useAppTheme } from "@/theme/theme-provider";
 
-export function SettingsScreen() {
+export function SettingsScreen({ navigation }: MainTabScreenProps<"Settings">) {
   const { colors } = useAppTheme();
   const { user, logout } = useAuth();
   const { config } = useAppConfig();
@@ -28,6 +29,18 @@ export function SettingsScreen() {
           <Text style={[styles.copy, { color: colors.textSoft }]}>
             The mobile app now uses one unified dark gradient interface across all screens.
           </Text>
+        </Surface>
+
+        <Surface style={styles.card}>
+          <Text style={[styles.cardTitle, { color: colors.text }]}>Operations</Text>
+          <Text style={[styles.copy, { color: colors.textSoft }]}>
+            Review and manage customer refund requests from the mobile dashboard.
+          </Text>
+          <Button
+            label="Open Refund"
+            tone="secondary"
+            onPress={() => navigation.getParent()?.navigate("Refund")}
+          />
         </Surface>
 
         <Surface style={styles.card}>

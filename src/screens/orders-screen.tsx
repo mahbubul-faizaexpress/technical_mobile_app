@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { DASHBOARD_ORDERS_QUERY } from "@/api/documents";
 import type { OrdersPageItem, OrderStatus } from "@/api/types";
@@ -12,7 +12,12 @@ import { SegmentedControl } from "@/components/common/segmented-control";
 import { Surface } from "@/components/common/surface";
 import { useAuth } from "@/providers/auth-provider";
 import { useAppTheme } from "@/theme/theme-provider";
-import { formatCurrency, formatDateTime, formatShortDate } from "@/utils/format";
+import {
+  formatCurrency,
+  formatDateTime,
+  formatOrderStatusLabel,
+  formatShortDate,
+} from "@/utils/format";
 import { buildOrderFinancialSummary, buildOrderSummary, getStatusTone } from "@/utils/orders";
 import { useAsyncResource } from "@/utils/use-async-resource";
 
@@ -62,6 +67,20 @@ export function OrdersScreen() {
   );
 
   const pageData = resource.data?.ordersPage;
+  const statusSummary = useMemo(
+    () => (status === "ALL" ? "all statuses" : formatOrderStatusLabel(status).toLowerCase()),
+    [status],
+  );
+
+  useEffect(() => {
+    if (!pageData?.totalPages) {
+      return;
+    }
+
+    if (page > pageData.totalPages) {
+      setPage(pageData.totalPages);
+    }
+  }, [page, pageData?.totalPages]);
 
   return (
     <Screen
@@ -97,12 +116,12 @@ export function OrdersScreen() {
         {pageData ? (
           <View style={styles.stack}>
             <Text style={[styles.summary, { color: colors.textSoft }]}>
-              {pageData.totalCount} orders found
+              {pageData.totalCount} orders found for {statusSummary}
             </Text>
             {pageData.items.length === 0 ? (
               <EmptyState
                 title="No orders found"
-                description="Adjust your search or status filters to see results."
+                description={`No ${statusSummary} orders matched the current search or filter.`}
               />
             ) : (
               pageData.items.map((order) => {
@@ -127,7 +146,7 @@ export function OrdersScreen() {
                         </Text>
                       </View>
                       <Badge
-                        label={status === "ALL" ? order.status : status}
+                        label={formatOrderStatusLabel(order.status)}
                         tone={getStatusTone(order.status)}
                       />
                     </View>

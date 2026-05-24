@@ -13,6 +13,7 @@ import { LoginScreen } from "@/screens/login-screen";
 import { OrdersScreen } from "@/screens/orders-screen";
 import { OverviewScreen } from "@/screens/overview-screen";
 import { RecentActivityScreen } from "@/screens/recent-activity-screen";
+import { RefundScreen } from "@/screens/refund-screen";
 import { SettingsScreen } from "@/screens/settings-screen";
 import { StatusBoardScreen } from "@/screens/status-board-screen";
 import type { MainTabParamList, RootStackParamList } from "./types";
@@ -194,6 +195,11 @@ export function AppNavigator() {
             options={({ route }) => ({
               title: route.params.companyName,
             })}
+          />
+          <Stack.Screen
+            name="Refund"
+            component={RefundScreen}
+            options={{ title: "Refund" }}
           />
         </>
       )}

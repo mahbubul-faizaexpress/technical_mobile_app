@@ -145,6 +145,7 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
   const [paidAmount, setPaidAmount] = useState("");
   const [orderUsers, setOrderUsers] = useState<OrderUserForm[]>([createUserForm()]);
   const [initialDocuments, setInitialDocuments] = useState<InitialDocumentRow[]>([]);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const compact = width < 420;
   const stackedFields = width < 760;
@@ -303,6 +304,8 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
     () => serviceOptions.filter((service) => selectedServiceIds.includes(service.id)),
     [selectedServiceIds, serviceOptions],
   );
+  const blockedPackageCount = selectedExistingCompanyOrderedPackageIds.size;
+  const blockedServiceCount = selectedExistingCompanyOrderedServiceIds.size;
 
   const documentServiceOptions = useMemo(() => {
     const baseServices =
@@ -429,10 +432,12 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
     setSelectedServiceIds([]);
     setInitialDocuments([]);
     setOrderUsers([createUserForm()]);
+    setSubmitError(null);
   };
 
   const handleCompanyNameChange = (value: string) => {
     setCompanyName(value);
+    setSubmitError(null);
 
     if (
       existingCompany &&
@@ -483,6 +488,7 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
 
   const addUser = () => {
     setOrderUsers((current) => [...current, createUserForm()]);
+    setSubmitError(null);
   };
 
   const removeUser = (userId: string) => {
@@ -490,6 +496,7 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
   };
 
   const toggleService = (serviceId: number) => {
+    setSubmitError(null);
     setSelectedServiceIds((current) =>
       current.includes(serviceId)
         ? current.filter((item) => item !== serviceId)
@@ -660,12 +667,14 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
     const validationError = validate();
 
     if (validationError) {
+      setSubmitError(validationError);
       Alert.alert("Cannot create order", validationError);
       return;
     }
 
     try {
       setSubmitting(true);
+      setSubmitError(null);
 
       const orderDates = buildOrderDates();
       const preparedUsers = orderUsers.map((user) => ({
@@ -771,6 +780,7 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
       Alert.alert("Success", "Order created successfully.");
       navigation.goBack();
     } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Could not create order.");
       Alert.alert(
         "Creation failed",
         error instanceof Error ? error.message : "Could not create order.",
@@ -834,6 +844,20 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
             </View>
           ) : null}
 
+          {isExistingCompanySelected ? (
+            <View style={[styles.inlineNotice, { backgroundColor: colors.cardMuted, borderColor: colors.border }]}>
+              <Text style={[styles.noticeLabel, { color: colors.textSoft }]}>Selected company</Text>
+              <Text style={[styles.noticeText, { color: colors.text }]}>{existingCompany?.name}</Text>
+              <Text style={[styles.helper, { color: colors.textSoft }]}>
+                {existingCompanyProfile
+                  ? `Using saved profile for ${selectedCountry?.name ?? existingCompanyProfile.state?.country?.name}: ${existingCompanyProfile.state?.name} | ${existingCompanyProfile.companyType?.name} | ${existingCompanyProfile.serviceType?.name}`
+                  : countryId
+                    ? `No saved profile found for ${selectedCountry?.name ?? "this country"}. Choose state, company type, and service type to create a new profile for this company.`
+                    : "Choose a country to load or create the correct company profile."}
+              </Text>
+            </View>
+          ) : null}
+
           <View style={[styles.row, stackedFields && styles.rowStack]}>
             <PickerField
               containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
@@ -848,6 +872,7 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
                 setStateId("");
                 setPackageId("");
                 setSelectedServiceIds([]);
+                setSubmitError(null);
               }}
             />
             <PickerField
@@ -969,6 +994,7 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
                   containerStyle={[styles.rowField, stackedFields && styles.rowFieldStack]}
                   editable={!isExistingCompanySelected}
                   label="Password"
+                  hint={!isExistingCompanySelected ? "Minimum 8 characters" : undefined}
                   secureTextEntry
                   textContentType="password"
                   value={user.password}
@@ -1008,6 +1034,13 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
           ))}
         </Surface>
 
+        {submitError ? (
+          <Surface muted style={styles.inlineNotice}>
+            <Text style={[styles.noticeLabel, { color: colors.danger }]}>Order issue</Text>
+            <Text style={[styles.noticeText, { color: colors.text }]}>{submitError}</Text>
+          </Surface>
+        ) : null}
+
         <SegmentedControl
           options={orderModeOptions}
           value={orderMode}
@@ -1018,6 +1051,18 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
           <Surface muted style={styles.inlineNotice}>
             <Text style={[styles.noticeText, { color: colors.text }]}>
               This company already has a package order. It can only order services outside that package.
+            </Text>
+          </Surface>
+        ) : null}
+
+        {isExistingCompanySelected && (blockedPackageCount > 0 || blockedServiceCount > 0) ? (
+          <Surface muted style={styles.inlineNotice}>
+            <Text style={[styles.noticeLabel, { color: colors.textSoft }]}>Scope restrictions</Text>
+            <Text style={[styles.noticeText, { color: colors.text }]}>
+              {blockedPackageCount > 0 ? `${blockedPackageCount} package restriction applied. ` : ""}
+              {blockedServiceCount > 0
+                ? `${blockedServiceCount} service restriction applied for this company and location.`
+                : ""}
             </Text>
           </Surface>
         ) : null}
@@ -1033,12 +1078,18 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
                 options={[
                   { label: "Choose package", value: "" },
                   ...packageOptions.map((item) => ({
-                    label: `${item.name} (${formatCurrency(item.currentPrice)})`,
+                    label: `${item.name} | ${formatCurrency(item.currentPrice)}`,
                     value: String(item.id),
                   })),
                 ]}
                 onValueChange={setPackageId}
               />
+
+              {!packageOptions.length && countryId ? (
+                <Text style={[styles.helper, { color: colors.textSoft }]}>
+                  No package is currently available for this company in the selected scope. Try another state or continue with services only.
+                </Text>
+              ) : null}
 
               <View style={[styles.inlineNotice, { backgroundColor: colors.cardMuted, borderColor: colors.border }]}>
                 <Text style={[styles.noticeLabel, { color: colors.textSoft }]}>Included services</Text>
@@ -1047,6 +1098,11 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
                     ? packageIncludedServices.map((item) => item.name).join(", ")
                     : "Choose a package to see included services."}
                 </Text>
+                {selectedPackage ? (
+                  <Text style={[styles.helper, { color: colors.textSoft }]}>
+                    {`Current price ${formatCurrency(selectedPackage.currentPrice)}`}
+                  </Text>
+                ) : null}
               </View>
             </>
           ) : null}
@@ -1061,6 +1117,14 @@ export function AddOrderScreen({ navigation }: RootStackScreenProps<"AddOrder">)
                 : "Select one or more services for this order."}
             </Text>
           </View>
+
+          {!serviceOptions.length ? (
+            <Text style={[styles.helper, { color: colors.textSoft }]}>
+              {countryId
+                ? "No services are available for the selected company scope."
+                : "Choose a country first to load available services."}
+            </Text>
+          ) : null}
 
           <View style={styles.chipWrap}>
             {serviceOptions.map((service) => {

@@ -16,8 +16,16 @@ export type PaymentMethod =
   | "DEBIT_CARD"
   | "WISE"
   | "PAYONEER";
+export type PaymentCurrency = "GBP" | "USD";
 export type OverviewRange = "TODAY" | "YESTERDAY" | "LAST_7_DAYS" | "THIS_MONTH" | "LAST_MONTH";
 export type RecentActivityType = "COMPANY" | "DOCUMENT" | "ORDER" | "PAYMENT" | "STATUS";
+export type RefundRequestStatus =
+  | "REQUESTED"
+  | "UNDER_REVIEW"
+  | "APPROVED"
+  | "PARTIALLY_REFUNDED"
+  | "REFUNDED"
+  | "REJECTED";
 
 export type GraphqlError = {
   message?: string;
@@ -426,6 +434,55 @@ export type TechnicalOrderRestrictions = {
   hasPackageOrderInScope: boolean;
   blockedPackageIds: number[];
   blockedServiceIds: number[];
+};
+
+export type RefundRequestUser = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+};
+
+export type RefundRequest = {
+  id: number;
+  status: RefundRequestStatus;
+  requestedAmount: string;
+  approvedAmount?: string | null;
+  refundedAmount?: string | null;
+  currency: PaymentCurrency;
+  isManual: boolean;
+  isFullyRefunded: boolean;
+  reason: string;
+  details?: string | null;
+  adminNote?: string | null;
+  orderId: number;
+  paymentId?: number | null;
+  originalPaidAmountLabel?: string | null;
+  remainingPaidAmountLabel?: string | null;
+  totalRefundedAmountLabel?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  reviewedAt?: string | null;
+  refundedAt?: string | null;
+  userInfo?: RefundRequestUser | null;
+  reviewedByUserInfo?: RefundRequestUser | null;
+  orderInfo?: {
+    id: number;
+    status: OrderStatus;
+    price?: string | null;
+    companyInfo?: {
+      name: string;
+    } | null;
+  } | null;
+  paymentInfo?: {
+    id: number;
+    transactionId?: string | null;
+    paymentMethod?: PaymentMethod | null;
+    status?: PaymentStatus | null;
+    amount?: string | null;
+    currency?: PaymentCurrency | null;
+  } | null;
 };
 
 export type CloudinarySignaturePayload = {
