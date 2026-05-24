@@ -19,6 +19,25 @@ type AppConfigContextValue = {
   isReady: boolean;
 };
 
+type ExtraConfigKey =
+  | "graphqlApiUrl"
+  | "webAppUrl"
+  | "cloudinaryCloudName"
+  | "cloudinaryUploadPreset";
+
+type ConstantsWithLegacyManifests = typeof Constants & {
+  manifest?: {
+    extra?: Partial<Record<ExtraConfigKey, unknown>>;
+  };
+  manifest2?: {
+    extra?: {
+      expoClient?: {
+        extra?: Partial<Record<ExtraConfigKey, unknown>>;
+      };
+    } & Partial<Record<ExtraConfigKey, unknown>>;
+  };
+};
+
 function normalizeUrlValue(value?: string | null) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -78,14 +97,45 @@ function resolveDeviceReachableUrl(value?: string | null) {
   }
 }
 
-function readExtraValue(
-  key:
-    | "graphqlApiUrl"
-    | "webAppUrl"
-    | "cloudinaryCloudName"
-    | "cloudinaryUploadPreset",
-) {
-  const value = Constants.expoConfig?.extra?.[key];
+function getWebRuntimeFallbackUrl(key: ExtraConfigKey) {
+  if (Platform.OS !== "web" || typeof window === "undefined") {
+    return "";
+  }
+
+  const { hostname, origin } = window.location;
+  const isLocalRuntime = isLocalhostHostname(hostname);
+
+  if (key === "graphqlApiUrl") {
+    return isLocalRuntime ? "http://localhost:8000/graphql" : `${origin}/api/graphql`;
+  }
+
+  if (key === "webAppUrl") {
+    return origin;
+  }
+
+  return "";
+}
+
+function readConstantsExtraValue(key: ExtraConfigKey) {
+  const constantsWithLegacyManifests = Constants as ConstantsWithLegacyManifests;
+  const candidates = [
+    Constants.expoConfig?.extra?.[key],
+    constantsWithLegacyManifests.manifest?.extra?.[key],
+    constantsWithLegacyManifests.manifest2?.extra?.[key],
+    constantsWithLegacyManifests.manifest2?.extra?.expoClient?.extra?.[key],
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return "";
+}
+
+function readExtraValue(key: ExtraConfigKey) {
+  const value = readConstantsExtraValue(key);
   if (typeof value === "string" && value.trim()) {
     if (key === "cloudinaryCloudName" || key === "cloudinaryUploadPreset") {
       return value.trim();
@@ -95,7 +145,11 @@ function readExtraValue(
   }
 
   if (key === "graphqlApiUrl") {
-    return resolveDeviceReachableUrl(process.env.EXPO_PUBLIC_GRAPHQL_API_URL);
+    return (
+      resolveDeviceReachableUrl(process.env.EXPO_PUBLIC_GRAPHQL_API_URL) ||
+      resolveDeviceReachableUrl(process.env.GRAPHQL_API_URL) ||
+      getWebRuntimeFallbackUrl(key)
+    );
   }
 
   if (key === "cloudinaryCloudName") {
@@ -106,7 +160,13 @@ function readExtraValue(
     return process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET?.trim() ?? "";
   }
 
-  return resolveDeviceReachableUrl(process.env.EXPO_PUBLIC_WEB_APP_URL) || "http://localhost:3000";
+  return (
+    resolveDeviceReachableUrl(process.env.EXPO_PUBLIC_WEB_APP_URL) ||
+    resolveDeviceReachableUrl(process.env.MOBILE_WEB_APP_URL) ||
+    resolveDeviceReachableUrl(process.env.WEB_APP_URL) ||
+    getWebRuntimeFallbackUrl(key) ||
+    "http://localhost:3000"
+  );
 }
 
 const AppConfigContext = createContext<AppConfigContextValue | null>(null);
