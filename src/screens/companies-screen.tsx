@@ -48,7 +48,12 @@ function CompanyCard({ colors, company, compact, onOpen }: CompanyCardProps) {
       >
         Open {company.companyName}
       </Link>
-      <Pressable accessibilityRole="button" onPress={onOpen} style={styles.cardPressable}>
+      <Pressable
+        accessibilityRole="button"
+        onPress={onOpen}
+        pointerEvents="box-only"
+        style={styles.cardPressable}
+      >
         <Surface style={styles.card}>
           <View style={[styles.rowBetween, compact && styles.rowStack]}>
             <View style={styles.copy}>
