@@ -10,6 +10,7 @@ import { AddOrderScreen } from "@/screens/add-order-screen";
 import { CompanyDetailScreen } from "@/screens/company-detail-screen";
 import { CompaniesScreen } from "@/screens/companies-screen";
 import { LoginScreen } from "@/screens/login-screen";
+import { OrdersScreen } from "@/screens/orders-screen";
 import { OverviewScreen } from "@/screens/overview-screen";
 import { RecentActivityScreen } from "@/screens/recent-activity-screen";
 import { SettingsScreen } from "@/screens/settings-screen";
@@ -93,6 +94,7 @@ function MainTabsNavigator() {
         tabBarIcon: ({ color, size, focused }) => {
           const iconName: Record<keyof MainTabParamList, keyof typeof Ionicons.glyphMap> = {
             Overview: focused ? "grid" : "grid-outline",
+            Orders: focused ? "receipt" : "receipt-outline",
             Status: focused ? "albums" : "albums-outline",
             Companies: focused ? "business" : "business-outline",
             Activity: focused ? "pulse" : "pulse-outline",
@@ -110,6 +112,11 @@ function MainTabsNavigator() {
         name="Overview"
         component={OverviewScreen}
         options={{ tabBarLabel: "Home" }}
+      />
+      <Tabs.Screen
+        name="Orders"
+        component={OrdersScreen}
+        options={{ title: "Orders", tabBarLabel: "Orders" }}
       />
       <Tabs.Screen
         name="Status"

@@ -1,4 +1,10 @@
-export type OrderStatus = "PENDING" | "PROCESSING" | "COMPLETED" | "REFUNDED";
+export type OrderStatus =
+  | "PENDING"
+  | "PROCESSING"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "EXPIRED"
+  | "REFUNDED";
 export type ServiceDocumentType = "SUBMITTED" | "RECEIVED";
 export type PaymentStatus = "PENDING" | "PAID" | "FAILED" | "PARTIALLY_PAID" | "REFUNDED";
 export type PaymentMethod =
@@ -90,13 +96,22 @@ export type PackageDistributionPoint = {
 export type RecentActivityItem = {
   id: string;
   activityType: RecentActivityType;
+  badgeLabel?: string | null;
   title: string;
   description: string;
   laneLabel: string;
   companyName: string;
+  actorName?: string | null;
   orderNumber?: string | null;
   occurredAt: string;
   chips: string[];
+};
+
+export type RecentActivityCounts = {
+  all: number;
+  documents: number;
+  orders: number;
+  company: number;
 };
 
 export type OrdersPageItem = {

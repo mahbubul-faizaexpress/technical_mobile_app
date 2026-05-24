@@ -94,12 +94,12 @@ export function OverviewScreen({ navigation }: MainTabScreenProps<"Overview">) {
             { input: { range: OverviewRange } }
           >(OVERVIEW_STATS_QUERY, { input: { range } }),
           executeAuthenticated<
-            { overviewOrdersByMonth: { items: MonthlyOrderPoint[] } },
+            { technicalOverviewOrdersByMonth: { items: MonthlyOrderPoint[] } },
             { input: { year: number; month?: number } }
           >(OVERVIEW_ORDERS_BY_MONTH_QUERY, { input: { year, month } }),
           executeAuthenticated<
             {
-              overviewPackageDistribution: {
+              technicalOverviewPackageDistribution: {
                 totalOrders: number;
                 items: PackageDistributionPoint[];
               };
@@ -119,10 +119,10 @@ export function OverviewScreen({ navigation }: MainTabScreenProps<"Overview">) {
 
       return {
         activities: activityResponse.recentActivities.items,
-        monthlyPoints: monthlyResponse.overviewOrdersByMonth.items,
-        packageDistribution: distributionResponse.overviewPackageDistribution.items,
+        monthlyPoints: monthlyResponse.technicalOverviewOrdersByMonth.items,
+        packageDistribution: distributionResponse.technicalOverviewPackageDistribution.items,
         stats: statsResponse.technicalOverviewStats,
-        totalPackageOrders: distributionResponse.overviewPackageDistribution.totalOrders,
+        totalPackageOrders: distributionResponse.technicalOverviewPackageDistribution.totalOrders,
       };
     },
     [executeAuthenticated, range, referenceDate.getFullYear(), referenceDate.getMonth()],

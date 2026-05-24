@@ -21,6 +21,9 @@ const statusOptions = [
   { label: "Pending", value: "PENDING" },
   { label: "Processing", value: "PROCESSING" },
   { label: "Completed", value: "COMPLETED" },
+  { label: "Cancelled", value: "CANCELLED" },
+  { label: "Expired", value: "EXPIRED" },
+  { label: "Refunded", value: "REFUNDED" },
 ] as const;
 
 type OrdersResponse = {

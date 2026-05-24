@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { RECENT_ACTIVITIES_QUERY } from "@/api/documents";
-import type { RecentActivityItem, RecentActivityType } from "@/api/types";
+import type { RecentActivityCounts, RecentActivityItem, RecentActivityType } from "@/api/types";
 import { Badge } from "@/components/common/badge";
 import { Button } from "@/components/common/button";
 import { EmptyState } from "@/components/common/empty-state";
@@ -23,8 +23,6 @@ const activityOptions = [
   { label: "All", value: "ALL" },
   { label: "Orders", value: "ORDER" },
   { label: "Docs", value: "DOCUMENT" },
-  { label: "Payments", value: "PAYMENT" },
-  { label: "Status", value: "STATUS" },
   { label: "Company", value: "COMPANY" },
 ] as const;
 
@@ -35,6 +33,7 @@ type RecentActivityResponse = {
     totalCount: number;
     totalPages: number;
     items: RecentActivityItem[];
+    counts: RecentActivityCounts;
   };
 };
 
@@ -64,6 +63,7 @@ export function RecentActivityScreen() {
   );
 
   const pageData = resource.data?.recentActivities;
+  const countSummary = pageData?.counts;
 
   return (
     <Screen
@@ -103,6 +103,12 @@ export function RecentActivityScreen() {
             <Text style={[styles.summary, { color: colors.textSoft }]}>
               {pageData.totalCount} activities found
             </Text>
+            {countSummary ? (
+              <Text style={[styles.summaryMeta, { color: colors.textDim }]}>
+                All {countSummary.all} | Docs {countSummary.documents} | Orders {countSummary.orders} | Company{" "}
+                {countSummary.company}
+              </Text>
+            ) : null}
             {pageData.items.length === 0 ? (
               <EmptyState
                 title="No recent activity"
@@ -112,7 +118,10 @@ export function RecentActivityScreen() {
               pageData.items.map((item) => (
                 <Surface key={item.id} style={styles.card}>
                   <View style={[styles.rowBetween, compact && styles.rowStack]}>
-                    <Badge label={formatActivityTypeLabel(item.activityType)} tone="accent" />
+                    <Badge
+                      label={item.badgeLabel?.trim() || formatActivityTypeLabel(item.activityType)}
+                      tone="accent"
+                    />
                     <Text style={[styles.meta, { color: colors.textSoft }]}>
                       {formatRelativeTime(item.occurredAt)}
                     </Text>
@@ -125,6 +134,16 @@ export function RecentActivityScreen() {
                     <Text style={[styles.meta, { color: colors.textSoft }]}>
                       {item.companyName}
                       {item.orderNumber ? ` | ${item.orderNumber}` : ""}
+                    </Text>
+                    {item.actorName?.trim() ? (
+                      <Text style={[styles.meta, { color: colors.textSoft }]}>
+                        {item.actorName.trim()}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View style={[styles.rowBetween, compact && styles.rowStack]}>
+                    <Text style={[styles.meta, { color: colors.textSoft }]}>
+                      {item.laneLabel}
                     </Text>
                     <Text style={[styles.meta, { color: colors.textSoft }]}>
                       {formatDateTime(item.occurredAt)}
@@ -167,6 +186,11 @@ const styles = StyleSheet.create({
   summary: {
     fontSize: 13,
     fontWeight: "600",
+  },
+  summaryMeta: {
+    fontSize: 12,
+    fontWeight: "500",
+    lineHeight: 18,
   },
   card: {
     gap: 12,

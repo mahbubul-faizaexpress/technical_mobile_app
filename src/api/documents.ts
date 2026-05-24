@@ -81,7 +81,7 @@ export const OVERVIEW_STATS_QUERY = `
 
 export const OVERVIEW_ORDERS_BY_MONTH_QUERY = `
   query OverviewOrdersByMonth($input: OverviewOrdersByMonthInput!) {
-    overviewOrdersByMonth(input: $input) {
+    technicalOverviewOrdersByMonth(input: $input) {
       availableYears
       selectedYear
       selectedMonth
@@ -96,7 +96,7 @@ export const OVERVIEW_ORDERS_BY_MONTH_QUERY = `
 
 export const OVERVIEW_PACKAGE_DISTRIBUTION_QUERY = `
   query OverviewPackageDistribution($input: OverviewPackageDistributionInput!) {
-    overviewPackageDistribution(input: $input) {
+    technicalOverviewPackageDistribution(input: $input) {
       availableYears
       selectedYear
       selectedMonth
@@ -343,10 +343,12 @@ export const RECENT_ACTIVITIES_QUERY = `
       items {
         id
         activityType
+        badgeLabel
         title
         description
         laneLabel
         companyName
+        actorName
         orderNumber
         occurredAt
         chips
@@ -357,6 +359,12 @@ export const RECENT_ACTIVITIES_QUERY = `
       totalPages
       hasNextPage
       hasPreviousPage
+      counts {
+        all
+        documents
+        orders
+        company
+      }
     }
   }
 `;

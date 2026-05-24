@@ -10,6 +10,10 @@ export function getStatusTone(status: OrderStatus) {
     return "completed" as const;
   }
 
+  if (status === "CANCELLED" || status === "EXPIRED") {
+    return "neutral" as const;
+  }
+
   return "pending" as const;
 }
 
